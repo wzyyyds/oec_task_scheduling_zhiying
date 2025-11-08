@@ -93,7 +93,7 @@ def convert_access_reports_to_matrix(access_report_path: str, time_slot_length: 
                     start_time = window_start
                 if end_time is None or window_end > end_time:
                     end_time = window_end
-    sat_names = list(sat_names)
+    sat_names = sorted(sat_names)
     Nc = len(task_names)
     Ns = len(sat_names)
     total_seconds = (end_time - start_time).astype('timedelta64[s]').astype(int)
