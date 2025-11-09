@@ -33,14 +33,24 @@ Returns:
 SEED = 42
 np.random.seed(SEED)
 
+# cite "SLICE: Energy-Efficient Satellite-Ground Co-Inference via Layer-Wise Scheduling Optimization".
 energy_per_cpu_cycle = 1e-9  # J
-cpu_cycles_per_second = 1e9  # cycles/s
-battery_capacity_seconds = 3600  # 1 hour
-satellite_solar_panel_power_watts = 20.0  # The power in watts the solar panel can generate at 100% intensity
+cpu_cycles_per_second = 1e10  # cycles/s
+battery_capacity_seconds = 7200  # 2 hour
+satellite_solar_panel_power_watts = 40.0  # The power in watts the solar panel can generate at 100% intensity
 time_slot_length = 60  # 1 minute
 task_average_period = 300  # 5 minutes
 task_average_deadline = 300  # 5 minutes
 task_average_execution = 50  # 50 seconds
+
+# energy_per_cpu_cycle = 1e-9  # J
+# cpu_cycles_per_second = 1e9  # cycles/s
+# battery_capacity_seconds = 3600  # 1 hour
+# satellite_solar_panel_power_watts = 20.0  # The power in watts the solar panel can generate at 100% intensity
+# time_slot_length = 60  # 1 minute
+# task_average_period = 300  # 5 minutes
+# task_average_deadline = 300  # 5 minutes
+# task_average_execution = 50  # 50 seconds
 
 @dataclass
 class Task:
