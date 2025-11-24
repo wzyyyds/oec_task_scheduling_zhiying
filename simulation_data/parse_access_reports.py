@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parse satellite access reports into:
+Parse satellite access_records reports into:
 { <place_name>: { <satellite_name>: [(start_time, end_time, duration_sec), ...] } }
 
 - Input: a folder containing text files in the shown format.
@@ -153,8 +153,8 @@ def parse_folder(folder: Path, pattern: str = "*.txt"):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Parse satellite access reports into a nested dictionary.")
-    ap.add_argument("folder", type=Path, help="Folder containing .txt access reports")
+    ap = argparse.ArgumentParser(description="Parse satellite access_records reports into a nested dictionary.")
+    ap.add_argument("folder", type=Path, help="Folder containing .txt access_records reports")
     ap.add_argument("--glob", default="*.txt", help="Glob pattern (default: *.txt)")
     ap.add_argument("--save-json", type=Path, default=None, help="Optional path to save JSON output")
     args = ap.parse_args()

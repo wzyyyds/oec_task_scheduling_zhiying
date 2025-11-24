@@ -6,7 +6,7 @@ from dataclasses import dataclass
 '''
 Build a test case with given parameters.
 Parameters:
-- sat_access_dict: dictionary mapping satellite IDs to their access windows
+- sat_access_dict: dictionary mapping satellite IDs to their access_records windows
 - energy_dict: dictionary mapping satellite IDs to their energy profiles
 - psi: energy per CPU cycle (J)
 - phi: CPU cycles per second
@@ -64,10 +64,10 @@ class Task:
 
 def convert_access_reports_to_matrix(access_report_path: str, time_slot_length: int):
     """
-    Convert satellite access reports to a visibility matrix A.
+    Convert satellite access_records reports to a visibility matrix A.
     Each entry A[i,j,k] indicates whether task i can see satellite j in time slot k.
     Args:
-    access_report_path: path to the access report JSON file
+    access_report_path: path to the access_records report JSON file
     time_slot_length: length of each time slot in seconds
     Returns:
     A: visibility matrix of shape (Nc, Ns, Nt)
@@ -79,7 +79,7 @@ def convert_access_reports_to_matrix(access_report_path: str, time_slot_length: 
     task_id_map: dictionary mapping task names to task IDs
     sat_id_map: dictionary mapping satellite names to satellite IDs
     """
-    # read access reports from file (stub implementation)
+    # read access_records reports from file (stub implementation)
     if not os.path.exists(access_report_path):
         raise FileNotFoundError(f"Access report file not found: {access_report_path}")
     with open(access_report_path, 'r') as f:
@@ -111,7 +111,7 @@ def convert_access_reports_to_matrix(access_report_path: str, time_slot_length: 
     task_id_map = {task_name: i for i, task_name in enumerate(task_names)}
     sat_id_map = {sat_name: j for j, sat_name in enumerate(sat_names)}
     A = np.zeros((Nc, Ns, Nt), dtype=int)
-    ## In the second pass, we fill in the matrix A based on the access windows
+    ## In the second pass, we fill in the matrix A based on the access_records windows
     for task_name, sat_dict in sat_access_dict.items():
         task_id = task_id_map[task_name]
         for sat_name, access_windows in sat_dict.items():

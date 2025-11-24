@@ -1,0 +1,3 @@
+nohup: ignoring input
+Total configs: 50
+[Warmup] running first config: baseline

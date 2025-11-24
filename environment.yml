@@ -1,0 +1,7 @@
+name: oecsim_mac
+channels:
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  - python=3.9
+prefix: /opt/miniconda3/envs/oecsim_mac

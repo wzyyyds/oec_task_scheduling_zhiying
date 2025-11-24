@@ -26,11 +26,10 @@ Feasibility:
 - Let D_total = sum of all job demands (seconds).
 - Run Edmonds–Karp. If max_flow == D_total (within tolerance), the instance is feasible.
 """
-
+import json
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Any
 import math
-import numpy as np
 import networkx as nx
 import numpy as np
 import time
@@ -178,11 +177,12 @@ def build_scheduling_graph(
     for job in jobs:
         i = job.task_id
         for j in range(Ns):
+            is_visited = False
             for k in range(Nt):
-                if A[i, j, k] != 1:
-                    continue
+                if A[i, j, k] == 1:
+                    is_visited = True
                 slot_start, slot_end = slot_bounds(slot_len, k)
-                if slot_start >= job.release and slot_end <= job.deadline_abs:
+                if is_visited and slot_start >= job.release and slot_end <= job.deadline_abs:
                     G.add_node(st_node(j, k))
                     G.add_edge(job_node(job), st_node(j, k), capacity=slot_len)
 
@@ -194,7 +194,7 @@ def build_scheduling_graph(
             st = st_node(j, k)
             en = en_node(j, k)
             # It's okay to add nodes/edges even if they aren't used by any job
-            G.add_node(st)
+            G.add_node(st) # TODO: only add when tau > 0, otherwise if st not exist, continue
             G.add_node(en)
             # ST -> EN
             G.add_edge(st, en, capacity=slot_len)
@@ -216,52 +216,73 @@ def build_scheduling_graph(
 
 def feasibility_test(
     tasks: List[Task],
-    A: np.ndarray,          # (Nc, Ns, Nt) binary
-    e_jk: np.ndarray,       # (Ns, Nt) energy in Joules per slot
-    psi: float,             # Joules per CPU cycle
-    phi: float,             # cycles per second
-    tau_b: float,           # seconds (converted battery capacity)
-    slot_len: float,        # seconds per slot
-    horizon_sec: float,     # total horizon in seconds (Nt * slot_len)
+    A: np.ndarray,
+    e_jk: np.ndarray,
+    psi: float,
+    phi: float,
+    tau_b: float,
+    slot_len: float,
+    horizon_sec: float,
     flow_tolerance: float = 1e-7,
-    return_flow: bool = False
+    return_flow: bool = False,
+    debug: bool = False,
+    debug_prefix: str = ""
 ) -> Dict[str, Any]:
     """
     Build the network and run Edmonds–Karp max flow.
-    Returns dict with feasibility, max_flow_value, total_demand, and (optionally) flow_dict.
     """
     Nc, Ns, Nt = A.shape
-    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6), \
-        "horizon_sec must equal Nt * slot_len."
+    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
 
-    # Generate jobs from periodic tasks
-    print("Generating jobs...")
+    if debug:
+        print("Generating jobs...")
     jobs = generate_jobs(tasks, horizon_sec=horizon_sec)
 
-    # Convert energy to time per slot
-    print("Converting energy to time...")
-    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)  # (Ns, Nt)
+    if debug:
+        with open(f"{debug_prefix}job_demand_dict.json", "w") as dump_f:
+            job_demand_dict = {
+                idx: {
+                    "demand": job.demand,
+                    "release_time": job.release,
+                    "deadline": job.deadline_abs
+                }
+                for idx, job in enumerate(jobs)
+            }
+            json.dump(job_demand_dict, dump_f, indent=4)
 
-    # Build graph
-    print("Building scheduling graph...")
+    if debug:
+        print("Converting energy to time...")
+    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)
+
+    if debug:
+        with open(f"{debug_prefix}tau_in.json", "w") as dump_f:
+            json.dump(tau_in.tolist(), dump_f, indent=4)
+
+    if debug:
+        print("Building scheduling graph...")
     start_graph_time = time.perf_counter()
     G, s, t, D_total = build_scheduling_graph(tasks, jobs, A, tau_in, tau_b, slot_len)
     end_graph_time = time.perf_counter()
-    print(f"Graph built in {end_graph_time - start_graph_time:.4f} sec: "
-          f"{G.number_of_nodes()} nodes, {G.number_of_edges()} edges.")
 
-    # Run Edmonds–Karp
-    print("Running max-flow (Edmonds–Karp)...")
+    if debug:
+        print(f"Graph built in {end_graph_time - start_graph_time:.4f} sec: "
+              f"{G.number_of_nodes()} nodes, {G.number_of_edges()} edges.")
+        nx.write_edgelist(G, f"{debug_prefix}edgelist.txt")
+
+    if debug:
+        print("Running max-flow (Edmonds–Karp)...")
     start_flow_time = time.perf_counter()
     maxflow_value, flow_dict = nx.maximum_flow(
         G, s, t, flow_func=nx.algorithms.flow.edmonds_karp
     )
     end_flow_time = time.perf_counter()
-    print(f"Max-flow computed in {end_flow_time - start_flow_time:.4f} sec.")
-    
-    print("Calculating feasibility...")
-    feasible = (maxflow_value + flow_tolerance >= D_total)
 
+    if debug:
+        print(f"Max-flow computed in {end_flow_time - start_flow_time:.4f} sec.")
+        with open(f"{debug_prefix}flow_dict.json", "w") as dump_f:
+            json.dump(flow_dict, dump_f, indent=4)
+
+    feasible = (maxflow_value + flow_tolerance >= D_total)
     result = {
         "feasible": feasible,
         "max_flow_value": maxflow_value,
@@ -276,6 +297,7 @@ def feasibility_test(
         result["graph"] = G
     return result
 
+
 # ----------------------------
 # Heuristic alternative algorithms
 # ----------------------------
@@ -285,103 +307,121 @@ Assign task to the satellite with most available energy in its visibility window
 '''
 def heuristic_most_energy_first(
     tasks: List[Task],
-    A: np.ndarray,          # (Nc, Ns, Nt) binary
-    e_jk: np.ndarray,       # (Ns, Nt) energy in Joules
-    psi: float,             # Joules per CPU cycle
-    phi: float,             # cycles per second
-    tau_b: float,           # seconds (converted battery capacity)
-    slot_len: float,        # seconds per slot
-    horizon_sec: float      # total horizon in seconds (Nt * slot_len)
+    A: np.ndarray,
+    e_jk: np.ndarray,
+    psi: float,
+    phi: float,
+    tau_b: float,
+    slot_len: float,
+    horizon_sec: float,
+    debug: bool = False,
 ) -> Dict[str, Any]:
-    """
-    A simple heuristic that assigns each task to the satellite with the most available energy
-    in its visibility window.
-    """
-    """
-    Build the network and run Edmonds–Karp max flow.
-    Returns dict with feasibility, max_flow_value, total_demand, and (optionally) flow_dict.
-    """
     Nc, Ns, Nt = A.shape
-    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6), \
-        "horizon_sec must equal Nt * slot_len."
+    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
 
-    # Generate jobs from periodic tasks
-    print("Generating jobs...")
+    if debug:
+        print("Generating jobs...")
     jobs = generate_jobs(tasks, horizon_sec=horizon_sec)
-    # sort jobs by release time
     jobs.sort(key=lambda job: job.release)
     D_total = sum(job.demand for job in jobs)
 
-    # Convert energy to time per slot
-    print("Converting energy to time...")
-    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)  # (Ns, Nt)
+    if debug:
+        print("Converting energy to time...")
+    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)
 
-    # Heuristic assignment
-    print("Running heuristic assignment...")
+    if debug:
+        print("Running heuristic assignment...")
+
+    finished_jobs_list = set()
     total_assigned = 0.0
-    sat_energy_dict = {}  # satellite_id -> remaining energy
-    active_job_index_list = []  # list of indices of active jobs
-    next_unreleased_job_idx = 0 # index of the next unreleased job in jobs list
-    job_index_time_slot_available_satellite_dict = {}  # job_index -> time slot -> list of available satellites
+    sat_energy_dict = {}
+    active_job_index_list = []
+    next_unreleased_job_idx = 0
+    job_index_time_slot_available_satellite_dict = {}
+
+    if debug:
+        with open("heur_job_demand_dict.json", "w") as dump_f:
+            json.dump({idx: job.demand for idx, job in enumerate(jobs)}, dump_f, indent=4)
+
     for time_slot_idx in range(Nt):
-        # calculate the remaining energy for each satellite at this time slot
+        # accumulate harvested energy
         for sat_idx in range(Ns):
             sat_energy_dict[sat_idx] = sat_energy_dict.get(sat_idx, 0.0) + tau_in[sat_idx, time_slot_idx]
-        # check if any new jobs are released at this time slot and add them to the active job list
+
         slot_start, slot_end = slot_bounds(slot_len, time_slot_idx)
-        while (next_unreleased_job_idx < len(jobs) and 
-               jobs[next_unreleased_job_idx].release <= slot_start):
-            active_job_index_list.append(next_unreleased_job_idx)
-            # update the available satellite list for the new job
-            for available_time_slot_idx in range(time_slot_idx, Nt):
-                slot_start2, slot_end2 = slot_bounds(slot_len, available_time_slot_idx)
-                # if the slot's end time exceeds the job's deadline, break
-                if slot_end2 > jobs[next_unreleased_job_idx].deadline_abs:
+
+        # release new jobs
+        while next_unreleased_job_idx < len(jobs) and jobs[next_unreleased_job_idx].release <= slot_start:
+            jidx = next_unreleased_job_idx
+            active_job_index_list.append(jidx)
+
+            # precompute all feasible (slot, sat) for this job
+            for ts in range(time_slot_idx, Nt):
+                ts_start, ts_end = slot_bounds(slot_len, ts)
+                if ts_end > jobs[jidx].deadline_abs:
                     break
-                # get observed satellite ids
-                observed_sat_ids = set()
                 for sat_idx in range(Ns):
-                    if sat_idx not in observed_sat_ids and A[jobs[next_unreleased_job_idx].task_id, sat_idx, available_time_slot_idx] == 1:
-                        observed_sat_ids.add(sat_idx)
-                    if sat_idx in observed_sat_ids:
-                        if next_unreleased_job_idx not in job_index_time_slot_available_satellite_dict:
-                            job_index_time_slot_available_satellite_dict[next_unreleased_job_idx] = {}
-                        if available_time_slot_idx not in job_index_time_slot_available_satellite_dict[next_unreleased_job_idx]:
-                            job_index_time_slot_available_satellite_dict[next_unreleased_job_idx][available_time_slot_idx] = []
-                        job_index_time_slot_available_satellite_dict[next_unreleased_job_idx][available_time_slot_idx].append(sat_idx)
+                    if A[jobs[jidx].task_id, sat_idx, ts] == 1:
+                        job_index_time_slot_available_satellite_dict.setdefault(jidx, {}).setdefault(ts, []).append(sat_idx)
+
             next_unreleased_job_idx += 1
-        # remove jobs that have already missed their deadlines
-        active_job_index_list = [
-            idx for idx in active_job_index_list
-            if jobs[idx].deadline_abs > slot_start
-        ]
-        # sort the active jobs by their deadlines (earliest deadline first)
+
+        # drop expired jobs
+        active_job_index_list = [idx for idx in active_job_index_list if jobs[idx].deadline_abs > slot_start]
+
+        # EDF
         active_job_index_list.sort(key=lambda idx: jobs[idx].deadline_abs)
-        # try to assign each active job to the satellite with the most available energy
-        for job_idx in active_job_index_list:
-            job = jobs[job_idx]
+
+        # assign within this slot
+        for jidx in active_job_index_list:
+            job = jobs[jidx]
             if job.demand <= 0:
                 continue
-            available_satellites = job_index_time_slot_available_satellite_dict.get(job_idx, {}).get(time_slot_idx, [])
-            if not available_satellites:
+
+            available_sats = job_index_time_slot_available_satellite_dict.get(jidx, {}).get(time_slot_idx, [])
+            if not available_sats:
                 continue
-            # find the satellite with the most available energy
-            best_satellite = max(available_satellites, key=lambda sat_idx: sat_energy_dict.get(sat_idx, 0.0))
-            available_energy = sat_energy_dict.get(best_satellite, 0.0)
-            if available_energy <= 0:
-                continue
-            # assign as much as possible to this job
-            assign_amount = min(job.demand, available_energy, slot_len)
-            job.demand -= assign_amount
-            sat_energy_dict[best_satellite] -= assign_amount
-            total_assigned += assign_amount
-        # remove completed jobs from the active job list
-        active_job_index_list = [idx for idx in active_job_index_list if jobs[idx].demand > 0]
-        # update the remaining energy for each satellite at the end of this time slot
+
+            # ★ 修正：按剩余能量从大到小排序，选“most energy first”
+            available_sats.sort(key=lambda sidx: sat_energy_dict.get(sidx, 0.0), reverse=True)
+
+            for sat in available_sats:
+                avail_E = sat_energy_dict.get(sat, 0.0)
+                if avail_E <= 0:
+                    continue
+
+                assign = min(job.demand, avail_E, slot_len)
+                if assign <= 0:
+                    continue
+
+                job.demand -= assign
+                sat_energy_dict[sat] = avail_E - assign
+                total_assigned += assign
+
+                if debug:
+                    print(f"[slot {time_slot_idx}] job {jidx} -> sat {sat}, "
+                          f"assign={assign:.4f}, remain_job={job.demand:.4f}, "
+                          f"remain_satE={sat_energy_dict[sat]:.4f}")
+
+                if job.demand <= 1e-12:
+                    finished_jobs_list.add(jidx)
+                    break  # 这轮 slot 这个 job 已满足，换下一个 job
+
+        # 清掉完成的
+        active_job_index_list = [idx for idx in active_job_index_list if jobs[idx].demand > 1e-12]
+
+        # 电池上限
         for sat_idx in range(Ns):
-            sat_energy_dict[sat_idx] = min(sat_energy_dict[sat_idx], tau_b)  # battery capacity limit
+            sat_energy_dict[sat_idx] = min(sat_energy_dict[sat_idx], tau_b)
+
     feasible = (total_assigned >= D_total - 1e-7)
-    result = {
+
+    if debug:
+        for jidx, job in enumerate(jobs):
+            if jidx not in finished_jobs_list and job.demand > 1e-9:
+                print(f"Unfinished job {jidx} (task {job.task_id}), remaining {job.demand}")
+
+    return {
         "feasible": feasible,
         "max_flow_value": total_assigned,
         "total_demand": D_total,
@@ -390,7 +430,224 @@ def heuristic_most_energy_first(
         "num_edges": None,
         "coverage_ratio": total_assigned / D_total if D_total > 0 else 1.0
     }
-    return result
+
+
+def heuristic_random_assignment(
+    tasks: List[Task],
+    A: np.ndarray,
+    e_jk: np.ndarray,
+    psi: float,
+    phi: float,
+    tau_b: float,
+    slot_len: float,
+    horizon_sec: float,
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """
+    随机 baseline：
+    - 按时隙推进
+    - 每个时隙：随机打乱活动 job 顺序
+    - 对每个 job：在当前时隙可见 && 有能量的卫星中随机选一个，能给多少给多少
+    """
+    Nc, Ns, Nt = A.shape
+    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
+
+    # jobs & 总需求
+    jobs = generate_jobs(tasks, horizon_sec=horizon_sec)
+    D_total = sum(j.demand for j in jobs)
+    if D_total <= 0:
+        return {
+            "feasible": True,
+            "max_flow_value": 0.0,
+            "total_demand": 0.0,
+            "coverage_ratio": 1.0,
+            "num_jobs": len(jobs),
+            "num_nodes": None,
+            "num_edges": None,
+        }
+
+    # 每时隙输入能量 -> 时间
+    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)
+
+    # 状态
+    remaining = [job.demand for job in jobs]
+    sat_energy = np.zeros(Ns, dtype=float)
+    active_jobs: List[int] = []
+    next_job_idx = 0
+    total_assigned = 0.0
+
+    rng = np.random.default_rng()  # 独立随机源
+
+    for k in range(Nt):
+        slot_start, slot_end = slot_bounds(slot_len, k)
+
+        # 累加本时隙 harvested 能量 + 电池上限
+        sat_energy += tau_in[:, k]
+        if tau_b > 0:
+            sat_energy = np.minimum(sat_energy, tau_b)
+
+        # 释放新 job
+        while next_job_idx < len(jobs) and jobs[next_job_idx].release <= slot_start:
+            active_jobs.append(next_job_idx)
+            next_job_idx += 1
+
+        # 去掉过期/已完成 job
+        active_jobs = [
+            jidx for jidx in active_jobs
+            if (jobs[jidx].deadline_abs > slot_start and remaining[jidx] > 1e-12)
+        ]
+        if not active_jobs:
+            continue
+
+        # 随机打乱 job 顺序
+        rng.shuffle(active_jobs)
+
+        # 遍历 job，尝试在当前 slot 执行
+        for jidx in active_jobs:
+            if remaining[jidx] <= 1e-12:
+                continue
+            task_id = jobs[jidx].task_id
+
+            # 当前 slot 可见 & 有能量的卫星
+            candidates = [
+                s for s in range(Ns)
+                if A[task_id, s, k] == 1 and sat_energy[s] > 1e-12
+            ]
+            if not candidates:
+                continue
+
+            sat = rng.choice(candidates)
+            assign = min(remaining[jidx], sat_energy[sat], slot_len)
+            if assign <= 0:
+                continue
+
+            remaining[jidx] -= assign
+            sat_energy[sat] -= assign
+            total_assigned += assign
+
+            if debug:
+                print(f"[rand][slot {k}] job {jidx} -> sat {sat}, assign={assign:.4f}, "
+                      f"remain_job={remaining[jidx]:.4f}, remain_sat={sat_energy[sat]:.4f}")
+
+    feasible = (total_assigned >= D_total - 1e-7)
+
+    return {
+        "feasible": feasible,
+        "max_flow_value": total_assigned,
+        "total_demand": D_total,
+        "coverage_ratio": total_assigned / D_total,
+        "num_jobs": len(jobs),
+        "num_nodes": None,
+        "num_edges": None,
+    }
+
+
+
+def heuristic_edf(
+    tasks: List[Task],
+    A: np.ndarray,
+    e_jk: np.ndarray,
+    psi: float,
+    phi: float,
+    tau_b: float,
+    slot_len: float,
+    horizon_sec: float,
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """
+    EDF baseline：
+    - 时隙推进
+    - 每个时隙：活动 job 按绝对截止时间从早到晚排序（EDF）
+    - 对每个 job：在当前时隙可见 && 有能量的卫星中，选剩余能量最多的卫星
+    - 和 most_energy_first 的区别：这里只看当前 slot（不预计算窗口），算法更 naive。
+    """
+    Nc, Ns, Nt = A.shape
+    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
+
+    jobs = generate_jobs(tasks, horizon_sec=horizon_sec)
+    D_total = sum(j.demand for j in jobs)
+    if D_total <= 0:
+        return {
+            "feasible": True,
+            "max_flow_value": 0.0,
+            "total_demand": 0.0,
+            "coverage_ratio": 1.0,
+            "num_jobs": len(jobs),
+            "num_nodes": None,
+            "num_edges": None,
+        }
+
+    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)
+
+    remaining = [job.demand for job in jobs]
+    sat_energy = np.zeros(Ns, dtype=float)
+    active_jobs: List[int] = []
+    next_job_idx = 0
+    total_assigned = 0.0
+
+    for k in range(Nt):
+        slot_start, slot_end = slot_bounds(slot_len, k)
+
+        # 收能量 + 电池上限
+        sat_energy += tau_in[:, k]
+        if tau_b > 0:
+            sat_energy = np.minimum(sat_energy, tau_b)
+
+        # 新 job 到达
+        while next_job_idx < len(jobs) and jobs[next_job_idx].release <= slot_start:
+            active_jobs.append(next_job_idx)
+            next_job_idx += 1
+
+        # 丢掉过期/完成
+        active_jobs = [
+            jidx for jidx in active_jobs
+            if (jobs[jidx].deadline_abs > slot_start and remaining[jidx] > 1e-12)
+        ]
+        if not active_jobs:
+            continue
+
+        # EDF 排序
+        active_jobs.sort(key=lambda jidx: jobs[jidx].deadline_abs)
+
+        # 当前 slot 分配
+        for jidx in active_jobs:
+            if remaining[jidx] <= 1e-12:
+                continue
+            task_id = jobs[jidx].task_id
+
+            # 当前 slot 可见的卫星中，选能量最多的
+            candidates = [
+                s for s in range(Ns)
+                if A[task_id, s, k] == 1 and sat_energy[s] > 1e-12
+            ]
+            if not candidates:
+                continue
+
+            best_sat = max(candidates, key=lambda s: sat_energy[s])
+            assign = min(remaining[jidx], sat_energy[best_sat], slot_len)
+            if assign <= 0:
+                continue
+
+            remaining[jidx] -= assign
+            sat_energy[best_sat] -= assign
+            total_assigned += assign
+
+            if debug:
+                print(f"[edf][slot {k}] job {jidx} -> sat {best_sat}, assign={assign:.4f}, "
+                      f"remain_job={remaining[jidx]:.4f}, remain_sat={sat_energy[best_sat]:.4f}")
+
+    feasible = (total_assigned >= D_total - 1e-7)
+
+    return {
+        "feasible": feasible,
+        "max_flow_value": total_assigned,
+        "total_demand": D_total,
+        "coverage_ratio": total_assigned / D_total,
+        "num_jobs": len(jobs),
+        "num_nodes": None,
+        "num_edges": None,
+    }
+
 
 
 
@@ -398,18 +655,7 @@ def run_case(name, tasks, A, e_jk, slot_len, tau_b, psi, phi, expected):
     Nt = A.shape[2]
     horizon_sec = Nt * slot_len
     start_time = time.perf_counter()
-    res = feasibility_test(
-        tasks=tasks,
-        A=A,
-        e_jk=e_jk,
-        psi=psi,
-        phi=phi,
-        tau_b=tau_b,
-        slot_len=slot_len,
-        horizon_sec=horizon_sec,
-        return_flow=False
-    )
-    # res = heuristic_most_energy_first(
+    # res = feasibility_test(
     #     tasks=tasks,
     #     A=A,
     #     e_jk=e_jk,
@@ -417,8 +663,19 @@ def run_case(name, tasks, A, e_jk, slot_len, tau_b, psi, phi, expected):
     #     phi=phi,
     #     tau_b=tau_b,
     #     slot_len=slot_len,
-    #     horizon_sec=horizon_sec
+    #     horizon_sec=horizon_sec,
+    #     return_flow=False
     # )
+    res = heuristic_most_energy_first(
+        tasks=tasks,
+        A=A,
+        e_jk=e_jk,
+        psi=psi,
+        phi=phi,
+        tau_b=tau_b,
+        slot_len=slot_len,
+        horizon_sec=horizon_sec
+    )
     end_time = time.perf_counter()
     print(f"[{name}] feasible={res['feasible']}  (expected={expected})  "
           f"flow={res['max_flow_value']:.1f} / demand={res['total_demand']:.1f}  "
@@ -443,112 +700,6 @@ def build_cases():
     e_jk[0,2] = 10.0
     yield ("Case 1 (Feasible - exact fit)", tasks, A, e_jk, slot_len, tau_b, psi, phi, True)
 
-    # ---------- Case 2 ----------
-    # Same as Case 1 but insufficient energy in eligible slots
-    e_jk2 = np.zeros((Ns, Nt))
-    e_jk2[0,1] = 5.0
-    e_jk2[0,2] = 5.0
-    yield ("Case 2 (Infeasible - not enough energy)", tasks, A, e_jk2, slot_len, tau_b, psi, phi, False)
-
-    # ---------- Case 3 ----------
-    slot_len = 10.0
-    Nt = 4
-    Ns = 1
-    tasks3 = [
-        Task(task_id=0, period=20.0, deadline=20.0, job_exec_time=15.0)
-    ]  # releases at 20 (single job), window [20,40]
-    A3 = np.zeros((1, Ns, Nt), dtype=int)
-    A3[0,0,2] = 1
-    A3[0,0,3] = 1
-    e_jk3 = np.zeros((Ns, Nt))
-    e_jk3[0,2] = 10.0
-    e_jk3[0,3] = 10.0
-    yield ("Case 3 (Feasible - split over two slots)", tasks3, A3, e_jk3, slot_len, tau_b, psi, phi, True)
-
-    # ---------- Case 4 ----------
-    slot_len = 10.0
-    Nt = 3
-    Ns = 1
-    tasks4 = [
-        Task(task_id=0, period=10.0, deadline=10.0, job_exec_time=10.0)
-    ]
-    A4 = np.zeros((1, Ns, Nt), dtype=int)  # only slot 0 visible (before release)
-    A4[0,0,0] = 1
-    e_jk4 = np.full((Ns, Nt), 10.0)        # plenty of energy
-    yield ("Case 4 (Infeasible - no coverage in window)", tasks4, A4, e_jk4, slot_len, tau_b, psi, phi, False)
-
-    # ---------- Case 5 ----------
-    # Two tasks, two satellites, both jobs at t=10, each only visible on its own satellite in slot 1.
-    slot_len = 10.0
-    Nt = 2
-    Ns = 2
-    tasks5 = [
-        Task(task_id=0, period=10.0, deadline=10.0, job_exec_time=10.0),
-        Task(task_id=1, period=10.0, deadline=10.0, job_exec_time=10.0)
-    ]
-    A5 = np.zeros((2, Ns, Nt), dtype=int)
-    A5[0,0,1] = 1  # task0 on sat0 at slot1
-    A5[1,1,1] = 1  # task1 on sat1 at slot1
-    e_jk5 = np.zeros((Ns, Nt))
-    e_jk5[0,1] = 10.0
-    e_jk5[1,1] = 10.0
-    yield ("Case 5 (Feasible - two sats avoid contention)", tasks5, A5, e_jk5, slot_len, tau_b, psi, phi, True)
-
-    # ---------- Case 6 ----------
-    # Large feasible case (Nc=100, Ns=100, Nt=1000), each task has one job at t=500,
-    Nc, Ns, Nt = 100, 100, 1000
-    slot_len = 10.0
-    horizon_sec = Nt * slot_len
-    tasks = [
-        Task(task_id=i, period=5000.0, deadline=10.0, job_exec_time=10.0)
-        for i in range(Nc)
-    ]
-    A = np.zeros((Nc, Ns, Nt), dtype=int)
-    for i in range(Nc):
-        A[i, i, 500] = 1
-    e_jk = np.zeros((Ns, Nt))
-    for i in range(Ns):
-        e_jk[i, 500] = 10.0
-    psi, phi = 1.0, 1.0  # τ = e
-    tau_b = 0.0
-    expected_feasible = True
-    yield ("Case 6 (Large feasible case)", tasks, A, e_jk, slot_len, tau_b, psi, phi, expected_feasible)
-
-    # ---------- Case 7 ----------
-    # Large infeasible case (Nc=100, Ns=100, Nt=1000), each task has one job at t=500,
-    Nc, Ns, Nt = 100, 100, 1000
-    slot_len = 10.0
-    horizon_sec = Nt * slot_len
-    tasks = [
-        Task(task_id=i, period=5000.0, deadline=10.0, job_exec_time=10.0)
-        for i in range(Nc)
-    ]
-    A = np.zeros((Nc, Ns, Nt), dtype=int)
-    for i in range(Nc):
-        A[i, i, 500] = 1
-    e_jk = np.zeros((Ns, Nt))
-    for i in range(Ns):
-        e_jk[i, 500] = 5.0   # insufficient energy
-    psi, phi = 1.0, 1.0  # τ = e
-    tau_b = 0.0
-    expected_feasible = False
-    yield ("Case 7 (Large infeasible case)", tasks, A, e_jk, slot_len, tau_b, psi, phi, expected_feasible)
-
-    # ---------- Super Large Case ----------
-    # Nc=100, Ns=100, Nt=2000, each task has multiple jobs depends on the period, which is a randomly generated integer between 10 and 30
-    Nc, Ns, Nt = 100, 100, 2000
-    slot_len = 10.0
-    horizon_sec = Nt * slot_len
-    tasks = [
-        Task(task_id=i, period=np.random.randint(10, 31) * 10.0, deadline=50.0, job_exec_time=10.0)
-        for i in range(Nc)
-    ]
-    A = np.random.randint(0, 2, size=(Nc, Ns, Nt), dtype=int)
-    e_jk = np.random.randint(0, 21, size=(Ns, Nt)).astype(float)  # energy between 0 and 20 Joules
-    psi, phi = 1.0, 1.0  # τ = e
-    tau_b = 20.0
-    expected_feasible = None  # unknown
-    yield ("Super Large Case", tasks, A, e_jk, slot_len, tau_b, psi, phi, expected_feasible)
 
 def import_case_from_file(test_case_json_file_path: str) -> Tuple[str, List[Task], np.ndarray, np.ndarray, float, float, float, float, bool]:
     """
