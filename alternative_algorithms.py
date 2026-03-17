@@ -29,6 +29,7 @@ Feasibility:
 import json
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Any
+import importlib
 import math
 import networkx as nx
 import numpy as np
@@ -62,6 +63,11 @@ class Job:
 # ----------------------------
 # Helpers
 # ----------------------------
+
+FLOW_ALGORITHMS = {
+    "edmonds_karp": nx.algorithms.flow.edmonds_karp,
+    "preflow_push": nx.algorithms.flow.preflow_push,
+}
 
 def generate_jobs(tasks: List[Task], horizon_sec: float) -> List[Job]:
     """
@@ -104,6 +110,20 @@ def convert_energy_to_time(e_jk: np.ndarray, psi: float, phi: float) -> np.ndarr
     return e_jk / (psi * phi)
 
 
+def resolve_flow_func(flow_algorithm: str):
+    if flow_algorithm not in FLOW_ALGORITHMS:
+        supported = ", ".join(sorted(FLOW_ALGORITHMS))
+        raise ValueError(f"Unsupported flow algorithm '{flow_algorithm}'. Supported: {supported}")
+    return FLOW_ALGORITHMS[flow_algorithm]
+
+
+def _load_pulp():
+    pulp_spec = importlib.util.find_spec("pulp")
+    if pulp_spec is None:
+        raise ImportError("PuLP is not installed in the current environment.")
+    return importlib.import_module("pulp")
+
+
 # ----------------------------
 # Graph construction
 # ----------------------------
@@ -140,6 +160,9 @@ def build_scheduling_graph(
     def job_node(job: Job) -> str:
         return f"JOB_{job.job_id}"
 
+    def job_slot_node(job: Job, k: int) -> str:
+        return f"JOBSLOT_{job.job_id}_{k}"
+
     def st_node(j: int, k: int) -> str:
         return f"ST_{j}_{k}"   # satellite-time node
 
@@ -172,19 +195,26 @@ def build_scheduling_graph(
                 G.add_edge(task_node(i), job_node(j), capacity=j.demand)
         D_total += demand_sum
 
-    # 3) Job -> SatelliteTime edges according to visibility + window [release, deadline]
-    #    capacity = slot_len
+    # 3) Job -> JobSlot -> SatelliteTime edges
+    #    Job -> JobSlot capacity = slot_len, which limits each job to at most one slot worth
+    #    of execution in a given time slot. This matches the heuristic/MILP convention that a
+    #    job cannot consume more than one slot's capacity during the same slot.
     for job in jobs:
         i = job.task_id
-        for j in range(Ns):
-            is_visited = False
-            for k in range(Nt):
-                if A[i, j, k] == 1:
-                    is_visited = True
-                slot_start, slot_end = slot_bounds(slot_len, k)
-                if is_visited and slot_start >= job.release and slot_end <= job.deadline_abs:
-                    G.add_node(st_node(j, k))
-                    G.add_edge(job_node(job), st_node(j, k), capacity=slot_len)
+        for k in range(Nt):
+            slot_start, slot_end = slot_bounds(slot_len, k)
+            if slot_start < job.release or slot_end > job.deadline_abs:
+                continue
+
+            job_slot = job_slot_node(job, k)
+            G.add_node(job_slot)
+            G.add_edge(job_node(job), job_slot, capacity=slot_len)
+
+            for j in range(Ns):
+                if A[i, j, k] != 1:
+                    continue
+                G.add_node(st_node(j, k))
+                G.add_edge(job_slot, st_node(j, k), capacity=slot_len)
 
     # 4) SatelliteTime(j,k) -> Energy(j,k) with capacity = slot_len
     # 5) Energy(j,k) -> Sink with capacity = tau_in[j,k]
@@ -226,10 +256,11 @@ def feasibility_test(
     flow_tolerance: float = 1e-7,
     return_flow: bool = False,
     debug: bool = False,
-    debug_prefix: str = ""
+    debug_prefix: str = "",
+    flow_algorithm: str = "edmonds_karp"
 ) -> Dict[str, Any]:
     """
-    Build the network and run Edmonds–Karp max flow.
+    Build the network and run the selected max-flow algorithm.
     """
     Nc, Ns, Nt = A.shape
     assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
@@ -263,6 +294,7 @@ def feasibility_test(
     start_graph_time = time.perf_counter()
     G, s, t, D_total = build_scheduling_graph(tasks, jobs, A, tau_in, tau_b, slot_len)
     end_graph_time = time.perf_counter()
+    flow_func = resolve_flow_func(flow_algorithm)
 
     if debug:
         print(f"Graph built in {end_graph_time - start_graph_time:.4f} sec: "
@@ -270,10 +302,10 @@ def feasibility_test(
         nx.write_edgelist(G, f"{debug_prefix}edgelist.txt")
 
     if debug:
-        print("Running max-flow (Edmonds–Karp)...")
+        print(f"Running max-flow ({flow_algorithm})...")
     start_flow_time = time.perf_counter()
     maxflow_value, flow_dict = nx.maximum_flow(
-        G, s, t, flow_func=nx.algorithms.flow.edmonds_karp
+        G, s, t, flow_func=flow_func
     )
     end_flow_time = time.perf_counter()
 
@@ -283,14 +315,25 @@ def feasibility_test(
             json.dump(flow_dict, dump_f, indent=4)
 
     feasible = (maxflow_value + flow_tolerance >= D_total)
+    completed_jobs = 0
+    for job in jobs:
+        job_node = f"JOB_{job.job_id}"
+        assigned = sum(flow_dict.get(job_node, {}).values())
+        if assigned + flow_tolerance >= job.demand:
+            completed_jobs += 1
     result = {
         "feasible": feasible,
         "max_flow_value": maxflow_value,
         "total_demand": D_total,
         "num_jobs": len(jobs),
+        "completed_jobs": completed_jobs,
+        "completed_job_ratio": completed_jobs / len(jobs) if jobs else 1.0,
         "num_nodes": G.number_of_nodes(),
         "num_edges": G.number_of_edges(),
-        "coverage_ratio": maxflow_value / D_total if D_total > 0 else 1.0
+        "coverage_ratio": maxflow_value / D_total if D_total > 0 else 1.0,
+        "flow_algorithm": flow_algorithm,
+        "graph_build_time_sec": end_graph_time - start_graph_time,
+        "max_flow_time_sec": end_flow_time - start_flow_time,
     }
     if return_flow:
         result["flow"] = flow_dict
@@ -302,9 +345,11 @@ def feasibility_test(
 # Heuristic alternative algorithms
 # ----------------------------
 
-'''
-Assign task to the satellite with most available energy in its visibility window.
-'''
+"""
+Energy-first EDF:
+- jobs are still processed in EDF order within each slot
+- for each job, choose the currently visible satellite with the most remaining energy
+"""
 def heuristic_most_energy_first(
     tasks: List[Task],
     A: np.ndarray,
@@ -337,7 +382,6 @@ def heuristic_most_energy_first(
     sat_energy_dict = {}
     active_job_index_list = []
     next_unreleased_job_idx = 0
-    job_index_time_slot_available_satellite_dict = {}
 
     if debug:
         with open("heur_job_demand_dict.json", "w") as dump_f:
@@ -347,27 +391,20 @@ def heuristic_most_energy_first(
         # accumulate harvested energy
         for sat_idx in range(Ns):
             sat_energy_dict[sat_idx] = sat_energy_dict.get(sat_idx, 0.0) + tau_in[sat_idx, time_slot_idx]
+        sat_slot_remaining = {sat_idx: slot_len for sat_idx in range(Ns)}
 
         slot_start, slot_end = slot_bounds(slot_len, time_slot_idx)
 
         # release new jobs
         while next_unreleased_job_idx < len(jobs) and jobs[next_unreleased_job_idx].release <= slot_start:
-            jidx = next_unreleased_job_idx
-            active_job_index_list.append(jidx)
-
-            # precompute all feasible (slot, sat) for this job
-            for ts in range(time_slot_idx, Nt):
-                ts_start, ts_end = slot_bounds(slot_len, ts)
-                if ts_end > jobs[jidx].deadline_abs:
-                    break
-                for sat_idx in range(Ns):
-                    if A[jobs[jidx].task_id, sat_idx, ts] == 1:
-                        job_index_time_slot_available_satellite_dict.setdefault(jidx, {}).setdefault(ts, []).append(sat_idx)
-
+            active_job_index_list.append(next_unreleased_job_idx)
             next_unreleased_job_idx += 1
 
-        # drop expired jobs
-        active_job_index_list = [idx for idx in active_job_index_list if jobs[idx].deadline_abs > slot_start]
+        # drop expired jobs: a slot is usable only if it fully fits before the deadline
+        active_job_index_list = [
+            idx for idx in active_job_index_list
+            if jobs[idx].deadline_abs >= slot_end and jobs[idx].demand > 1e-12
+        ]
 
         # EDF
         active_job_index_list.sort(key=lambda idx: jobs[idx].deadline_abs)
@@ -378,34 +415,37 @@ def heuristic_most_energy_first(
             if job.demand <= 0:
                 continue
 
-            available_sats = job_index_time_slot_available_satellite_dict.get(jidx, {}).get(time_slot_idx, [])
+            available_sats = [
+                sat_idx for sat_idx in range(Ns)
+                if A[job.task_id, sat_idx, time_slot_idx] == 1
+                and sat_energy_dict.get(sat_idx, 0.0) > 0
+                and sat_slot_remaining[sat_idx] > 1e-12
+            ]
             if not available_sats:
                 continue
 
-            # ★ 修正：按剩余能量从大到小排序，选“most energy first”
-            available_sats.sort(key=lambda sidx: sat_energy_dict.get(sidx, 0.0), reverse=True)
+            # Energy-first: among visible satellites in this slot, pick the most charged one.
+            sat = max(available_sats, key=lambda sidx: sat_energy_dict.get(sidx, 0.0))
+            avail_E = sat_energy_dict.get(sat, 0.0)
+            if avail_E <= 0:
+                continue
 
-            for sat in available_sats:
-                avail_E = sat_energy_dict.get(sat, 0.0)
-                if avail_E <= 0:
-                    continue
+            assign = min(job.demand, avail_E, sat_slot_remaining[sat])
+            if assign <= 0:
+                continue
 
-                assign = min(job.demand, avail_E, slot_len)
-                if assign <= 0:
-                    continue
+            job.demand -= assign
+            sat_energy_dict[sat] = avail_E - assign
+            sat_slot_remaining[sat] -= assign
+            total_assigned += assign
 
-                job.demand -= assign
-                sat_energy_dict[sat] = avail_E - assign
-                total_assigned += assign
+            if debug:
+                print(f"[slot {time_slot_idx}] job {jidx} -> sat {sat}, "
+                      f"assign={assign:.4f}, remain_job={job.demand:.4f}, "
+                      f"remain_satE={sat_energy_dict[sat]:.4f}")
 
-                if debug:
-                    print(f"[slot {time_slot_idx}] job {jidx} -> sat {sat}, "
-                          f"assign={assign:.4f}, remain_job={job.demand:.4f}, "
-                          f"remain_satE={sat_energy_dict[sat]:.4f}")
-
-                if job.demand <= 1e-12:
-                    finished_jobs_list.add(jidx)
-                    break  # 这轮 slot 这个 job 已满足，换下一个 job
+            if job.demand <= 1e-12:
+                finished_jobs_list.add(jidx)
 
         # 清掉完成的
         active_job_index_list = [idx for idx in active_job_index_list if jobs[idx].demand > 1e-12]
@@ -426,6 +466,8 @@ def heuristic_most_energy_first(
         "max_flow_value": total_assigned,
         "total_demand": D_total,
         "num_jobs": len(jobs),
+        "completed_jobs": len(finished_jobs_list),
+        "completed_job_ratio": len(finished_jobs_list) / len(jobs) if jobs else 1.0,
         "num_nodes": None,
         "num_edges": None,
         "coverage_ratio": total_assigned / D_total if D_total > 0 else 1.0
@@ -441,6 +483,7 @@ def heuristic_random_assignment(
     tau_b: float,
     slot_len: float,
     horizon_sec: float,
+    random_seed: int = None,
     debug: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -476,10 +519,11 @@ def heuristic_random_assignment(
     next_job_idx = 0
     total_assigned = 0.0
 
-    rng = np.random.default_rng()  # 独立随机源
+    rng = np.random.default_rng(random_seed)
 
     for k in range(Nt):
         slot_start, slot_end = slot_bounds(slot_len, k)
+        sat_slot_remaining = np.full(Ns, slot_len, dtype=float)
 
         # 累加本时隙 harvested 能量 + 电池上限
         sat_energy += tau_in[:, k]
@@ -494,7 +538,7 @@ def heuristic_random_assignment(
         # 去掉过期/已完成 job
         active_jobs = [
             jidx for jidx in active_jobs
-            if (jobs[jidx].deadline_abs > slot_start and remaining[jidx] > 1e-12)
+            if (jobs[jidx].deadline_abs >= slot_end and remaining[jidx] > 1e-12)
         ]
         if not active_jobs:
             continue
@@ -511,18 +555,19 @@ def heuristic_random_assignment(
             # 当前 slot 可见 & 有能量的卫星
             candidates = [
                 s for s in range(Ns)
-                if A[task_id, s, k] == 1 and sat_energy[s] > 1e-12
+                if A[task_id, s, k] == 1 and sat_energy[s] > 1e-12 and sat_slot_remaining[s] > 1e-12
             ]
             if not candidates:
                 continue
 
             sat = rng.choice(candidates)
-            assign = min(remaining[jidx], sat_energy[sat], slot_len)
+            assign = min(remaining[jidx], sat_energy[sat], sat_slot_remaining[sat])
             if assign <= 0:
                 continue
 
             remaining[jidx] -= assign
             sat_energy[sat] -= assign
+            sat_slot_remaining[sat] -= assign
             total_assigned += assign
 
             if debug:
@@ -530,6 +575,7 @@ def heuristic_random_assignment(
                       f"remain_job={remaining[jidx]:.4f}, remain_sat={sat_energy[sat]:.4f}")
 
     feasible = (total_assigned >= D_total - 1e-7)
+    completed_jobs = sum(1 for rem in remaining if rem <= 1e-12)
 
     return {
         "feasible": feasible,
@@ -537,10 +583,176 @@ def heuristic_random_assignment(
         "total_demand": D_total,
         "coverage_ratio": total_assigned / D_total,
         "num_jobs": len(jobs),
+        "completed_jobs": completed_jobs,
+        "completed_job_ratio": completed_jobs / len(jobs) if jobs else 1.0,
         "num_nodes": None,
         "num_edges": None,
     }
 
+
+
+def milp_small_instance(
+    tasks: List[Task],
+    A: np.ndarray,
+    e_jk: np.ndarray,
+    psi: float,
+    phi: float,
+    tau_b: float,
+    slot_len: float,
+    horizon_sec: float,
+    time_limit_sec: int = 300,
+    max_feasible_assignments: int = 25000,
+    objective_mode: str = "throughput",
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """
+    Small-instance MILP baseline solved with PuLP/CBC.
+    """
+    pulp = _load_pulp()
+
+    Nc, Ns, Nt = A.shape
+    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
+
+    jobs = generate_jobs(tasks, horizon_sec=horizon_sec)
+    D_total = sum(job.demand for job in jobs)
+    if D_total <= 0:
+        return {
+            "feasible": True,
+            "max_flow_value": 0.0,
+            "total_demand": 0.0,
+            "coverage_ratio": 1.0,
+            "num_jobs": len(jobs),
+            "num_nodes": None,
+            "num_edges": None,
+            "solver_status": "trivial",
+            "objective_mode": objective_mode,
+        }
+
+    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)
+
+    feasible_assignments = []
+    feasible_by_job = {}
+    feasible_by_job_slot = {}
+    feasible_by_sat_slot = {}
+    for jidx, job in enumerate(jobs):
+        for sat_idx in range(Ns):
+            for slot_idx in range(Nt):
+                slot_start, slot_end = slot_bounds(slot_len, slot_idx)
+                if A[job.task_id, sat_idx, slot_idx] != 1:
+                    continue
+                if slot_start < job.release or slot_end > job.deadline_abs:
+                    continue
+                key = (jidx, sat_idx, slot_idx)
+                feasible_assignments.append(key)
+                feasible_by_job.setdefault(jidx, []).append(key)
+                feasible_by_job_slot.setdefault((jidx, slot_idx), []).append(key)
+                feasible_by_sat_slot.setdefault((sat_idx, slot_idx), []).append(key)
+
+    if len(feasible_assignments) > max_feasible_assignments:
+        return {
+            "feasible": False,
+            "max_flow_value": 0.0,
+            "total_demand": D_total,
+            "coverage_ratio": 0.0,
+            "num_jobs": len(jobs),
+            "num_nodes": None,
+            "num_edges": None,
+            "solver_status": "skipped_too_large",
+            "num_candidate_assignments": len(feasible_assignments),
+            "objective_mode": objective_mode,
+        }
+
+    start_solve_time = time.perf_counter()
+    prob = pulp.LpProblem("satellite_scheduling_small_milp", pulp.LpMaximize)
+
+    y = {
+        key: pulp.LpVariable(f"y_{key[0]}_{key[1]}_{key[2]}", lowBound=0.0, upBound=slot_len, cat="Continuous")
+        for key in feasible_assignments
+    }
+    x = {
+        key: pulp.LpVariable(f"x_{key[0]}_{key[1]}_{key[2]}", lowBound=0, upBound=1, cat="Binary")
+        for key in feasible_assignments
+    }
+    z = {
+        jidx: pulp.LpVariable(f"z_{jidx}", lowBound=0, upBound=1, cat="Binary")
+        for jidx in range(len(jobs))
+    }
+    battery = {
+        (sat_idx, slot_idx): pulp.LpVariable(
+            f"b_{sat_idx}_{slot_idx}", lowBound=0.0, upBound=tau_b, cat="Continuous"
+        )
+        for sat_idx in range(Ns) for slot_idx in range(Nt)
+    }
+    spill = {
+        (sat_idx, slot_idx): pulp.LpVariable(f"spill_{sat_idx}_{slot_idx}", lowBound=0.0, cat="Continuous")
+        for sat_idx in range(Ns) for slot_idx in range(Nt)
+    }
+
+    total_assigned = pulp.lpSum(y.values())
+    total_completed = pulp.lpSum(z.values())
+    if objective_mode == "throughput":
+        prob += total_assigned
+    elif objective_mode == "completed_jobs":
+        prob += total_completed
+    else:
+        raise ValueError(f"Unknown MILP objective_mode: {objective_mode}")
+
+    for key in feasible_assignments:
+        prob += y[key] <= slot_len * x[key]
+
+    for jidx, job in enumerate(jobs):
+        assigned_to_job = pulp.lpSum(y[key] for key in feasible_by_job.get(jidx, []))
+        prob += assigned_to_job <= job.demand
+        prob += assigned_to_job >= job.demand * z[jidx]
+
+    for sat_idx in range(Ns):
+        for slot_idx in range(Nt):
+            sat_slot_keys = feasible_by_sat_slot.get((sat_idx, slot_idx), [])
+            slot_usage = pulp.lpSum(y[key] for key in sat_slot_keys)
+            prob += slot_usage <= slot_len
+
+            if slot_idx == 0:
+                prob += battery[(sat_idx, slot_idx)] == (
+                    tau_in[sat_idx, slot_idx] - slot_usage - spill[(sat_idx, slot_idx)]
+                )
+            else:
+                prob += battery[(sat_idx, slot_idx)] == (
+                    battery[(sat_idx, slot_idx - 1)]
+                    + tau_in[sat_idx, slot_idx]
+                    - slot_usage
+                    - spill[(sat_idx, slot_idx)]
+                )
+
+    solver = pulp.PULP_CBC_CMD(msg=debug, timeLimit=time_limit_sec)
+    prob.solve(solver)
+    end_solve_time = time.perf_counter()
+
+    status = pulp.LpStatus[prob.status]
+    assigned = sum(float(var.value() or 0.0) for var in y.values())
+    completed_jobs = 0
+    for jidx, job in enumerate(jobs):
+        assigned_to_job = sum(
+            float(y[key].value() or 0.0)
+            for key in feasible_by_job.get(jidx, [])
+        )
+        if assigned_to_job + 1e-7 >= job.demand:
+            completed_jobs += 1
+
+    return {
+        "feasible": assigned >= D_total - 1e-7 and status in {"Optimal", "Integer Feasible"},
+        "max_flow_value": assigned,
+        "total_demand": D_total,
+        "coverage_ratio": assigned / D_total if D_total > 0 else 1.0,
+        "num_jobs": len(jobs),
+        "completed_jobs": completed_jobs,
+        "completed_job_ratio": completed_jobs / len(jobs) if jobs else 1.0,
+        "num_nodes": None,
+        "num_edges": None,
+        "solver_status": status,
+        "solve_time_sec": end_solve_time - start_solve_time,
+        "num_candidate_assignments": len(feasible_assignments),
+        "objective_mode": objective_mode,
+    }
 
 
 def heuristic_edf(
@@ -555,11 +767,11 @@ def heuristic_edf(
     debug: bool = False,
 ) -> Dict[str, Any]:
     """
-    EDF baseline：
+    Deadline EDF baseline:
     - 时隙推进
     - 每个时隙：活动 job 按绝对截止时间从早到晚排序（EDF）
-    - 对每个 job：在当前时隙可见 && 有能量的卫星中，选剩余能量最多的卫星
-    - 和 most_energy_first 的区别：这里只看当前 slot（不预计算窗口），算法更 naive。
+    - 对每个 job：在当前时隙可见 && 有能量的卫星中，按固定顺序选第一个可用卫星
+    - 不使用能量优先规则，作为更纯粹的 deadline-driven baseline
     """
     Nc, Ns, Nt = A.shape
     assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
@@ -587,6 +799,7 @@ def heuristic_edf(
 
     for k in range(Nt):
         slot_start, slot_end = slot_bounds(slot_len, k)
+        sat_slot_remaining = np.full(Ns, slot_len, dtype=float)
 
         # 收能量 + 电池上限
         sat_energy += tau_in[:, k]
@@ -601,7 +814,7 @@ def heuristic_edf(
         # 丢掉过期/完成
         active_jobs = [
             jidx for jidx in active_jobs
-            if (jobs[jidx].deadline_abs > slot_start and remaining[jidx] > 1e-12)
+            if (jobs[jidx].deadline_abs >= slot_end and remaining[jidx] > 1e-12)
         ]
         if not active_jobs:
             continue
@@ -615,28 +828,30 @@ def heuristic_edf(
                 continue
             task_id = jobs[jidx].task_id
 
-            # 当前 slot 可见的卫星中，选能量最多的
+            # Pure deadline EDF: use a fixed satellite order instead of energy-aware tie-breaking.
             candidates = [
                 s for s in range(Ns)
-                if A[task_id, s, k] == 1 and sat_energy[s] > 1e-12
+                if A[task_id, s, k] == 1 and sat_energy[s] > 1e-12 and sat_slot_remaining[s] > 1e-12
             ]
             if not candidates:
                 continue
 
-            best_sat = max(candidates, key=lambda s: sat_energy[s])
-            assign = min(remaining[jidx], sat_energy[best_sat], slot_len)
+            selected_sat = candidates[0]
+            assign = min(remaining[jidx], sat_energy[selected_sat], sat_slot_remaining[selected_sat])
             if assign <= 0:
                 continue
 
             remaining[jidx] -= assign
-            sat_energy[best_sat] -= assign
+            sat_energy[selected_sat] -= assign
+            sat_slot_remaining[selected_sat] -= assign
             total_assigned += assign
 
             if debug:
-                print(f"[edf][slot {k}] job {jidx} -> sat {best_sat}, assign={assign:.4f}, "
-                      f"remain_job={remaining[jidx]:.4f}, remain_sat={sat_energy[best_sat]:.4f}")
+                print(f"[edf][slot {k}] job {jidx} -> sat {selected_sat}, assign={assign:.4f}, "
+                      f"remain_job={remaining[jidx]:.4f}, remain_sat={sat_energy[selected_sat]:.4f}")
 
     feasible = (total_assigned >= D_total - 1e-7)
+    completed_jobs = sum(1 for rem in remaining if rem <= 1e-12)
 
     return {
         "feasible": feasible,
@@ -644,6 +859,8 @@ def heuristic_edf(
         "total_demand": D_total,
         "coverage_ratio": total_assigned / D_total,
         "num_jobs": len(jobs),
+        "completed_jobs": completed_jobs,
+        "completed_job_ratio": completed_jobs / len(jobs) if jobs else 1.0,
         "num_nodes": None,
         "num_edges": None,
     }

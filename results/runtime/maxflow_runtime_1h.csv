@@ -1,0 +1,2 @@
+label,horizon_sec,slots,num_jobs,num_nodes,num_edges,total_demand,max_flow_value,coverage_ratio,graph_build_sec,maxflow_sec,total_runtime_sec
+1h,3600,60,312,6080,23332,14778.382904434613,11499.114903444228,0.7781037328511524,0.18461212500000002,1.097308917,1.282094458

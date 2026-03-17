@@ -11,20 +11,20 @@ import alternative_algorithms as alt
 # ---------- Paths ----------
 ACCESS_REPORT_PATH = os.path.join("simulation_data", "parsed_access.json")
 ENERGY_REPORT_PATH = os.path.join("simulation_data", "solar_parsed.json")
-
-FEAS_CSV = "results_feasibility.csv"
-HEUR_CSV = "results_heuristic.csv"
+EXPERIMENT_RESULTS_DIR = os.path.join("results", "experiments")
+FEAS_CSV = os.path.join(EXPERIMENT_RESULTS_DIR, "results_feasibility.csv")
+HEUR_CSV = os.path.join(EXPERIMENT_RESULTS_DIR, "results_heuristic.csv")
 
 # ---------- Baseline config ----------
 BASE_CONFIG = {
-    "energy_per_cpu_cycle": 1e-9,          # psi
-    "cpu_cycles_per_second": 1e10,         # phi
-    "battery_capacity_seconds": 7200,      # tau_b (seconds of compute)
-    "satellite_solar_panel_power_watts": 40.0,
+    "energy_per_cpu_cycle": 1e-8,          # psi
+    "cpu_cycles_per_second": 1e9,         # phi
+    "battery_capacity_seconds": 600,      # tau_b (seconds of compute)
+    "satellite_solar_panel_power_watts": 6,
     "time_slot_length": 60,                # slot_len
-    "task_average_period": 300,
-    "task_average_deadline": 300,
-    "task_average_execution": 50,
+    "task_average_period": 500,
+    "task_average_deadline": 60,
+    "task_average_execution": 45,
 }
 
 
@@ -177,6 +177,16 @@ def run_single_config(tag: str, config: dict):
         tau_b=tau_b, slot_len=slot_len, horizon_sec=horizon_sec,
     )
 
+    # 5) MILP baseline for small instances only
+    if Nt <= 60:
+        try:
+            results["milp_small"] = alt.milp_small_instance(
+                tasks=tasks, A=A, e_jk=e_jk, psi=psi, phi=phi,
+                tau_b=tau_b, slot_len=slot_len, horizon_sec=horizon_sec,
+            )
+        except ImportError as exc:
+            print(f"[MILP skipped] {tag}: {exc}")
+
     # ===== 通用元信息 =====
     meta = {
         "tag": tag,
@@ -223,6 +233,7 @@ def run_single_config(tag: str, config: dict):
 def write_csv(path: str, rows: list):
     if not rows:
         return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     fieldnames = sorted({k for r in rows for k in r.keys()})
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -232,7 +243,7 @@ def write_csv(path: str, rows: list):
 
 def main():
     import os
-    OUT_CSV = os.path.abspath("results_all.csv")  # 用绝对路径避免工作目录混乱
+    OUT_CSV = os.path.abspath(os.path.join(EXPERIMENT_RESULTS_DIR, "results_all.csv"))
     configs = list(iter_configs())
     total = len(configs)
     print(f"Total configs: {total}", flush=True)
