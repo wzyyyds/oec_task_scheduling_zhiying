@@ -1,0 +1,2 @@
+label,horizon_sec,slots,num_jobs,num_nodes,num_edges,total_demand,max_flow_value,coverage_ratio,flow_algorithm,graph_build_sec,maxflow_sec,total_runtime_sec
+24h,86400,1440,7555,198988,356777,359448.5460952605,226922.1245380185,0.6313062801424713,ford_fulkerson,1.8724484170000002,68.197988916,70.073956958

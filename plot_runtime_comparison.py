@@ -21,13 +21,15 @@ HORIZON_TO_HOURS = {
     "12h": 12,
     "24h": 24,
 }
-ALGORITHM_ORDER = ["edmonds_karp", "preflow_push"]
+ALGORITHM_ORDER = ["edmonds_karp", "ford_fulkerson", "preflow_push"]
 ALGORITHM_LABELS = {
     "edmonds_karp": "Edmonds-Karp",
+    "ford_fulkerson": "Ford-Fulkerson",
     "preflow_push": "Push-Relabel",
 }
 ALGORITHM_STYLES = {
     "edmonds_karp": {"color": "#C44E52", "marker": "o"},
+    "ford_fulkerson": {"color": "#55A868", "marker": "^"},
     "preflow_push": {"color": "#4C72B0", "marker": "s"},
 }
 RUNTIME_LABELS = {
@@ -60,32 +62,40 @@ def load_runtime_csvs(pattern: str) -> pd.DataFrame:
 
 
 def annotate_speedups(ax, df: pd.DataFrame, runtime_col: str) -> None:
-    ek = df[df["flow_algorithm"] == "edmonds_karp"].set_index("label")
-    pp = df[df["flow_algorithm"] == "preflow_push"].set_index("label")
+    baseline = df[df["flow_algorithm"] == "preflow_push"].set_index("label")
+    compare_algorithms = ["edmonds_karp", "ford_fulkerson"]
 
     for label in HORIZON_ORDER:
-        if label not in ek.index or label not in pp.index:
-            continue
-
-        ek_runtime = float(ek.at[label, runtime_col])
-        pp_runtime = float(pp.at[label, runtime_col])
-        if ek_runtime <= 0 or pp_runtime <= 0:
+        if label not in baseline.index:
             continue
 
         x = HORIZON_TO_HOURS[label]
-        y = max(ek_runtime, pp_runtime)
-        speedup = ek_runtime / pp_runtime
+        baseline_runtime = float(baseline.at[label, runtime_col])
+        if baseline_runtime <= 0:
+            continue
 
-        ax.annotate(
-            f"{speedup:.1f}x",
-            xy=(x, y),
-            xytext=(0, 10),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=10,
-            color="#333333",
-        )
+        for idx, algorithm in enumerate(compare_algorithms):
+            comp = df[df["flow_algorithm"] == algorithm].set_index("label")
+            if label not in comp.index:
+                continue
+
+            comp_runtime = float(comp.at[label, runtime_col])
+            if comp_runtime <= 0:
+                continue
+
+            y = max(comp_runtime, baseline_runtime)
+            speedup = comp_runtime / baseline_runtime
+
+            ax.annotate(
+                f"{speedup:.1f}x",
+                xy=(x, y),
+                xytext=(0, 10 + idx * 12),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="#333333",
+            )
 
 
 def plot_runtime(df: pd.DataFrame, output_png: str, output_pdf: str, runtime_col: str) -> None:

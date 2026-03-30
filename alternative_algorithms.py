@@ -112,9 +112,97 @@ def convert_energy_to_time(e_jk: np.ndarray, psi: float, phi: float) -> np.ndarr
 
 def resolve_flow_func(flow_algorithm: str):
     if flow_algorithm not in FLOW_ALGORITHMS:
-        supported = ", ".join(sorted(FLOW_ALGORITHMS))
+        supported = ", ".join(sorted(list(FLOW_ALGORITHMS) + ["ford_fulkerson"]))
         raise ValueError(f"Unsupported flow algorithm '{flow_algorithm}'. Supported: {supported}")
     return FLOW_ALGORITHMS[flow_algorithm]
+
+
+def _build_capacity_maps(G: nx.DiGraph) -> Tuple[Dict[Any, Dict[Any, float]], Dict[Any, Dict[Any, float]]]:
+    capacities: Dict[Any, Dict[Any, float]] = {}
+    residual: Dict[Any, Dict[Any, float]] = {}
+
+    for u, v, data in G.edges(data=True):
+        cap = float(data.get("capacity", 0.0))
+        capacities.setdefault(u, {})[v] = cap
+        residual.setdefault(u, {})
+        residual.setdefault(v, {})
+        residual[u].setdefault(v, 0.0)
+        residual[v].setdefault(u, 0.0)
+        residual[u][v] += cap
+
+    return capacities, residual
+
+
+def _dfs_augmenting_path(
+    residual: Dict[Any, Dict[Any, float]],
+    source: Any,
+    sink: Any,
+    visited: set,
+    path: List[Tuple[Any, Any]],
+    eps: float = 1e-12,
+) -> bool:
+    if source == sink:
+        return True
+
+    visited.add(source)
+    for nxt, capacity in residual.get(source, {}).items():
+        if capacity <= eps or nxt in visited:
+            continue
+        path.append((source, nxt))
+        if _dfs_augmenting_path(residual, nxt, sink, visited, path, eps=eps):
+            return True
+        path.pop()
+    return False
+
+
+def naive_ford_fulkerson(
+    G: nx.DiGraph,
+    source: Any,
+    sink: Any,
+) -> Tuple[float, Dict[Any, Dict[Any, float]]]:
+    """
+    Naive Ford-Fulkerson using DFS to choose an arbitrary augmenting path.
+    Capacities may be floats; we stop when no residual path with capacity > eps exists.
+    """
+    capacities, residual = _build_capacity_maps(G)
+    eps = 1e-12
+    max_flow_value = 0.0
+
+    while True:
+        path: List[Tuple[Any, Any]] = []
+        found = _dfs_augmenting_path(residual, source, sink, visited=set(), path=path, eps=eps)
+        if not found:
+            break
+
+        bottleneck = min(residual[u][v] for u, v in path)
+        max_flow_value += bottleneck
+
+        for u, v in path:
+            residual[u][v] -= bottleneck
+            residual[v][u] += bottleneck
+
+    flow_dict: Dict[Any, Dict[Any, float]] = {}
+    for u, nbrs in capacities.items():
+        row: Dict[Any, float] = {}
+        for v, cap in nbrs.items():
+            flow = cap - residual[u].get(v, 0.0)
+            if flow > eps:
+                row[v] = flow
+        flow_dict[u] = row
+    return max_flow_value, flow_dict
+
+
+def solve_max_flow(
+    G: nx.DiGraph,
+    source: Any,
+    sink: Any,
+    flow_algorithm: str,
+) -> Tuple[float, Dict[Any, Dict[Any, float]]]:
+    if flow_algorithm == "ford_fulkerson":
+        return naive_ford_fulkerson(G, source, sink)
+
+    flow_func = resolve_flow_func(flow_algorithm)
+    return nx.maximum_flow(G, source, sink, flow_func=flow_func)
 
 
 def _load_pulp():
@@ -294,8 +382,6 @@ def feasibility_test(
     start_graph_time = time.perf_counter()
     G, s, t, D_total = build_scheduling_graph(tasks, jobs, A, tau_in, tau_b, slot_len)
     end_graph_time = time.perf_counter()
-    flow_func = resolve_flow_func(flow_algorithm)
-
     if debug:
         print(f"Graph built in {end_graph_time - start_graph_time:.4f} sec: "
               f"{G.number_of_nodes()} nodes, {G.number_of_edges()} edges.")
@@ -304,9 +390,7 @@ def feasibility_test(
     if debug:
         print(f"Running max-flow ({flow_algorithm})...")
     start_flow_time = time.perf_counter()
-    maxflow_value, flow_dict = nx.maximum_flow(
-        G, s, t, flow_func=flow_func
-    )
+    maxflow_value, flow_dict = solve_max_flow(G, s, t, flow_algorithm)
     end_flow_time = time.perf_counter()
 
     if debug:
@@ -490,7 +574,8 @@ def heuristic_random_assignment(
     随机 baseline：
     - 按时隙推进
     - 每个时隙：随机打乱活动 job 顺序
-    - 对每个 job：在当前时隙可见 && 有能量的卫星中随机选一个，能给多少给多少
+    - 对每个 job：直接从所有卫星中随机选一个
+    - 若该卫星在当前时隙不可见 / 没能量 / 没有剩余时隙时间，则本次尝试失败，不重试
     """
     Nc, Ns, Nt = A.shape
     assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
@@ -552,15 +637,20 @@ def heuristic_random_assignment(
                 continue
             task_id = jobs[jidx].task_id
 
-            # 当前 slot 可见 & 有能量的卫星
-            candidates = [
-                s for s in range(Ns)
-                if A[task_id, s, k] == 1 and sat_energy[s] > 1e-12 and sat_slot_remaining[s] > 1e-12
-            ]
-            if not candidates:
+            sat = int(rng.integers(Ns))
+            if (
+                A[task_id, sat, k] != 1
+                or sat_energy[sat] <= 1e-12
+                or sat_slot_remaining[sat] <= 1e-12
+            ):
+                if debug:
+                    print(
+                        f"[rand][slot {k}] job {jidx} -> sat {sat}, failed "
+                        f"(visible={A[task_id, sat, k]}, energy={sat_energy[sat]:.4f}, "
+                        f"slot_remain={sat_slot_remaining[sat]:.4f})"
+                    )
                 continue
 
-            sat = rng.choice(candidates)
             assign = min(remaining[jidx], sat_energy[sat], sat_slot_remaining[sat])
             if assign <= 0:
                 continue

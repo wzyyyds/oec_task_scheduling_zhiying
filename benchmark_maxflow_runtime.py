@@ -6,8 +6,6 @@ import time
 from typing import Dict, List
 
 import numpy as np
-import networkx as nx
-
 import simulation_data.build_testcase as bt
 import alternative_algorithms as alt
 
@@ -36,7 +34,7 @@ HORIZON_OPTIONS = [
     ("24h", 24 * 3600),
 ]
 HORIZON_LOOKUP = dict(HORIZON_OPTIONS)
-FLOW_ALGORITHMS = ["edmonds_karp", "preflow_push"]
+FLOW_ALGORITHMS = ["edmonds_karp", "preflow_push", "ford_fulkerson"]
 
 
 def build_full_case(config: Dict[str, float]):
@@ -104,14 +102,8 @@ def benchmark_single_horizon(
     )
     end_graph = time.perf_counter()
 
-    flow_func = alt.resolve_flow_func(flow_algorithm)
     start_flow = time.perf_counter()
-    max_flow_value, _ = nx.maximum_flow(
-        graph,
-        source,
-        sink,
-        flow_func=flow_func,
-    )
+    max_flow_value, _ = alt.solve_max_flow(graph, source, sink, flow_algorithm)
     end_flow = time.perf_counter()
     end_total = time.perf_counter()
 
@@ -159,7 +151,7 @@ def main():
         "--algorithms",
         nargs="*",
         default=FLOW_ALGORITHMS,
-        help="Flow algorithms to benchmark. Choices: edmonds_karp preflow_push",
+        help="Flow algorithms to benchmark. Choices: edmonds_karp preflow_push ford_fulkerson",
     )
     args = parser.parse_args()
 
