@@ -15,13 +15,13 @@ OUT_CSV = os.path.join(OUT_DIR, "parameter_sweep_1h.csv")
 HORIZON_SEC = 3600
 
 SWEEPS: List[Tuple[str, str, List[float]]] = [
-    ("battery_capacity_seconds", "Battery capacity (s)", [100, 200, 300, 400, 500, 600]),
-    ("cpu_cycles_per_second", "CPU cycles per second", [1e8, 2e8, 3e8, 4e8, 5e8, 6e8, 7e8, 8e8, 9e8, 1e9, 2e9, 3e9, 4e9, 5e9, 6e9, 7e9, 8e9, 9e9, 1e10]),
-    ("energy_per_cpu_cycle", "Energy per CPU cycle", [1e-5, 9e-6, 8e-6, 7e-6, 6e-6, 5e-6, 4e-6, 3e-6, 2e-6, 1e-6]),
-    ("satellite_solar_panel_power_watts", "Solar panel power (W)", [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]),
-    ("task_average_deadline", "Average deadline (s)", [0, 5, 10, 15, 20, 30, 45, 60]),
-    ("task_average_execution", "Average execution time (s)", [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]),
-    ("task_average_period", "Average period (s)", [200, 225, 250, 300, 250, 400, 450, 500]),
+    ("battery_capacity_seconds", "Battery capacity (s)", [0, 0.5, 1.0, 1.5, 2.0]),
+    ("cpu_cycles_per_second", "CPU cycles per second", [1e7, 1e8, 1e9, 1e10, 1e11]),
+    ("energy_per_cpu_cycle", "Energy per CPU cycle", [1e-9, 1e-8, 1e-7]),
+    ("satellite_solar_panel_power_watts", "Solar panel power (W)", [1, 5, 10, 15, 20, 25, 30]),
+    ("task_average_deadline", "Average deadline (s)", [10, 20, 30, 40, 50, 60]),
+    ("task_average_execution", "Average execution time (s)", [30, 35, 40, 45, 50, 55, 60]),
+    ("task_average_period", "Average period (s)", [100, 120, 140, 160, 180, 200]),
     ("time_slot_length", "Time slot length (s)", [60]),
 ]
 

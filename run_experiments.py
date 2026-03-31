@@ -18,13 +18,13 @@ HEUR_CSV = os.path.join(EXPERIMENT_RESULTS_DIR, "results_heuristic.csv")
 # ---------- Baseline config ----------
 BASE_CONFIG = {
     "energy_per_cpu_cycle": 1e-8,          # psi
-    "cpu_cycles_per_second": 1e9,         # phi
+    "cpu_cycles_per_second": 1e10,         # phi
     "battery_capacity_seconds": 600,      # tau_b (seconds of compute)
-    "satellite_solar_panel_power_watts": 6,
+    "satellite_solar_panel_power_watts": 12,
     "time_slot_length": 60,                # slot_len
-    "task_average_period": 500,
-    "task_average_deadline": 60,
-    "task_average_execution": 45,
+    "task_average_period": 200,
+    "task_average_deadline": 40,
+    "task_average_execution": 40,
 }
 
 
@@ -129,7 +129,7 @@ def build_case_from_config(config: dict):
                 task_id=task_id,
                 period=td["period"],
                 deadline=td["deadline"],
-                job_exec_time=td["job_exec_time"],
+                job_exec_cycles=td["job_exec_cycles"],
                 offset=td.get("offset", 0.0),
             )
         )

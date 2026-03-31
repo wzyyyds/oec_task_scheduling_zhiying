@@ -41,7 +41,8 @@ satellite_solar_panel_power_watts = 40.0  # The power in watts the solar panel c
 time_slot_length = 60  # 1 minute
 task_average_period = 300  # 5 minutes
 task_average_deadline = 300  # 5 minutes
-task_average_execution = 50  # 50 seconds
+task_average_execution = 50  # 50 seconds at the reference CPU rate
+execution_reference_cpu_cycles_per_second = 1e9
 
 # energy_per_cpu_cycle = 1e-9  # J
 # cpu_cycles_per_second = 1e9  # cycles/s
@@ -58,7 +59,7 @@ class Task:
     task_id: int
     period: float          # seconds, T_i
     deadline: float        # seconds, D_i (relative to release)
-    job_exec_time: float   # seconds of processing required per job (p_i)
+    job_exec_cycles: float # CPU cycles required per job
     # Optional: allow a start offset if needed in the future (default releases at T_i, 2T_i, ...)
     offset: float = 0.0    # seconds; by default keep 0.0 so first release is at T_i (per spec)
 
@@ -198,11 +199,13 @@ def build_case(
     # build tasks
     task_info_dict = {}
     for task_name, task_id in task_id_map.items():
+        job_exec_seconds_at_reference = np.random.exponential(task_average_execution)
         task_info_dict[task_id] = {
             'task_name': task_name,
             'period': np.random.exponential(task_average_period),
             'deadline': np.random.exponential(task_average_deadline),
-            'job_exec_time': np.random.exponential(task_average_execution),
+            'job_exec_cycles': job_exec_seconds_at_reference * execution_reference_cpu_cycles_per_second,
+            'job_exec_time_at_reference': job_exec_seconds_at_reference,
             'offset': 0.0
         }
     # convert visibility matrix A from numpy array to list for json serialization

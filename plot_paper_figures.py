@@ -50,9 +50,7 @@ MARKERS = {
 def save(fig, stem: str) -> None:
     os.makedirs(PLOTS_DIR, exist_ok=True)
     png = os.path.join(PLOTS_DIR, f"{stem}.png")
-    pdf = os.path.join(PLOTS_DIR, f"{stem}.pdf")
     fig.savefig(png, dpi=240, bbox_inches="tight", facecolor=fig.get_facecolor())
-    fig.savefig(pdf, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
 
 

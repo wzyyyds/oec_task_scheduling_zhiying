@@ -51,9 +51,7 @@ STYLES = {
 def save(fig, stem: str) -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     png = os.path.join(OUT_DIR, f"{stem}.png")
-    pdf = os.path.join(OUT_DIR, f"{stem}.pdf")
     fig.savefig(png, dpi=240, bbox_inches="tight", facecolor=fig.get_facecolor())
-    fig.savefig(pdf, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
 
 
@@ -74,6 +72,13 @@ def format_tick(v: float) -> str:
     return f"{v:g}"
 
 
+def format_cpu_tick(v: float) -> str:
+    if v <= 0:
+        return "0"
+    exponent = int(f"{v:.0e}".split("e")[1])
+    return rf"$10^{exponent}$"
+
+
 def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
     sub = df[df["parameter_key"] == parameter_key].copy()
     if sub.empty:
@@ -81,12 +86,13 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
 
     parameter_label = str(sub["parameter_label"].iloc[0])
     values = sorted(sub["parameter_value"].unique())
-    x_positions = list(range(len(values)))
-    x_index = {value: idx for idx, value in enumerate(values)}
 
     fig, ax = plt.subplots(figsize=(7.8, 4.8))
     fig.patch.set_facecolor("#FBFAF7")
     setup_axes(ax)
+    x_positions = list(range(len(values)))
+    x_index = {value: idx for idx, value in enumerate(values)}
+    use_log_x = parameter_key == "cpu_cycles_per_second"
 
     for algorithm in ["maxflow_preflow_push", "energy_first", "edf", "random"]:
         alg = sub[sub["algorithm"] == algorithm].copy()
@@ -94,8 +100,9 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
             continue
         alg = alg.sort_values("parameter_value")
         style = STYLES[algorithm]
+
         ax.plot(
-            [x_index[v] for v in alg["parameter_value"]],
+            alg["parameter_value"] if use_log_x else [x_index[v] for v in alg["parameter_value"]],
             alg["coverage_ratio"],
             color=style["color"],
             marker=style["marker"],
@@ -106,7 +113,14 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
 
     ax.set_xlabel(parameter_label, fontsize=12)
     ax.set_ylabel("Coverage Ratio", fontsize=12)
-    ax.set_xticks(x_positions, [format_tick(v) for v in values], rotation=20)
+    if parameter_key == "cpu_cycles_per_second":
+        ax.set_xscale("log")
+        tick_labels = [format_cpu_tick(v) for v in values]
+        ax.set_xticks(values, tick_labels, rotation=20)
+    else:
+        tick_labels = [format_tick(v) for v in values]
+        ax.set_xticks(x_positions, tick_labels, rotation=20)
+
     ax.legend(frameon=False, fontsize=10, loc="best")
     ax.set_title(f"Coverage vs. {parameter_label}", fontsize=14, pad=10)
     fig.tight_layout()
