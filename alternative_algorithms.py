@@ -899,13 +899,14 @@ def heuristic_edf(
     tau_b: float,
     slot_len: float,
     horizon_sec: float,
+    random_seed: int = 42,
     debug: bool = False,
 ) -> Dict[str, Any]:
     """
     Deadline EDF baseline:
     - 时隙推进
     - 每个时隙：活动 job 按绝对截止时间从早到晚排序（EDF）
-    - 对每个 job：在当前时隙可见 && 有能量的卫星中，按固定顺序选第一个可用卫星
+    - 对每个 job：在当前时隙可见 && 有能量的卫星中，随机选一个可用卫星
     - 不使用能量优先规则，作为更纯粹的 deadline-driven baseline
     """
     Nc, Ns, Nt = A.shape
@@ -937,6 +938,7 @@ def heuristic_edf(
     active_jobs: List[int] = []
     next_job_idx = 0
     total_assigned = 0.0
+    rng = np.random.default_rng(random_seed)
 
     for k in range(Nt):
         slot_start, slot_end = slot_bounds(slot_len, k)
@@ -967,7 +969,6 @@ def heuristic_edf(
                 continue
             task_id = jobs[jidx].task_id
 
-            # Pure deadline EDF: use a fixed satellite order instead of energy-aware tie-breaking.
             candidates = [
                 s for s in range(Ns)
                 if A[task_id, s, k] == 1 and sat_energy[s] > eps and sat_slot_remaining[s] > eps
@@ -975,7 +976,7 @@ def heuristic_edf(
             if not candidates:
                 continue
 
-            selected_sat = candidates[0]
+            selected_sat = int(rng.choice(candidates))
             assign = min(remaining[jidx], sat_energy[selected_sat], sat_slot_remaining[selected_sat])
             if assign <= eps:
                 continue

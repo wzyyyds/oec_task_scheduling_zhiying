@@ -36,7 +36,7 @@ FILE_STEMS = {
 LABELS = {
     "maxflow_preflow_push": "Max-flow",
     "energy_first": "Energy-first EDF",
-    "edf": "Deadline EDF",
+    "edf": "EDF",
     "random": "Random",
 }
 
