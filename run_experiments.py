@@ -19,12 +19,12 @@ HEUR_CSV = os.path.join(EXPERIMENT_RESULTS_DIR, "results_heuristic.csv")
 BASE_CONFIG = {
     "energy_per_cpu_cycle": 1e-8,          # psi
     "cpu_cycles_per_second": 1e10,         # phi
-    "battery_capacity_seconds": 600,      # tau_b (seconds of compute)
-    "satellite_solar_panel_power_watts": 12,
+    "battery_capacity_seconds": 0.5,      # tau_b (seconds of compute)
+    "satellite_solar_panel_power_watts": 14,
     "time_slot_length": 60,                # slot_len
-    "task_average_period": 200,
-    "task_average_deadline": 40,
-    "task_average_execution": 40,
+    "task_average_period": 220,
+    "task_average_deadline": 30,
+    "task_average_execution": 50,
 }
 
 
@@ -147,6 +147,7 @@ def run_single_config(tag: str, config: dict):
     tasks, A, e_jk, slot_len, tau_b, psi, phi, expected = build_case_from_config(config)
     Nc, Ns, Nt = A.shape
     horizon_sec = Nt * slot_len
+    print(f"[Case:{tag}] Nc={Nc} Ns={Ns} Nt={Nt} slot_len={slot_len}", flush=True)
 
     # ===== 运行所有算法 =====
     results = {}

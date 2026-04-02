@@ -55,7 +55,7 @@ def save(fig, stem: str) -> None:
 
 
 def setup_axes(ax):
-    ax.set_facecolor("#FBFAF7")
+    ax.set_facecolor("#FFFFFF")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.35)
@@ -63,7 +63,7 @@ def setup_axes(ax):
 
 def add_bar_labels(ax, values, y_positions, x_offset: float) -> None:
     for value, y_pos in zip(values, y_positions):
-        ax.text(value + x_offset, y_pos, f"{value:.3f}", va="center", ha="left", fontsize=10)
+        ax.text(value + x_offset, y_pos, f"{value:.3f}", va="center", ha="left", fontsize=12)
 
 
 def plot_small_instance_coverage():
@@ -79,14 +79,15 @@ def plot_small_instance_coverage():
     y = range(len(df))
 
     fig, ax = plt.subplots(figsize=(7.8, 4.6))
-    fig.patch.set_facecolor("#FBFAF7")
+    fig.patch.set_facecolor("#FFFFFF")
     setup_axes(ax)
     ax.barh(y, values, color=colors, height=0.62)
-    ax.set_yticks(list(y), labels, fontsize=11)
+    ax.set_yticks(list(y), labels, fontsize=13)
     ax.invert_yaxis()
-    ax.set_xlabel("Coverage Ratio", fontsize=12)
+    ax.set_xlabel("Coverage Ratio", fontsize=15)
     ax.set_xlim(0, max(values) * 1.18)
-    ax.set_title("Small Instance Coverage Comparison (1h)", fontsize=14, pad=10)
+    ax.set_title("Small Instance Coverage Comparison (1h)", fontsize=17, pad=10)
+    ax.tick_params(axis="x", labelsize=13)
 
     add_bar_labels(ax, values, y, max(values) * 0.015)
 
@@ -96,7 +97,7 @@ def plot_small_instance_coverage():
 
 def _plot_horizon_sweep(df: pd.DataFrame, metric: str, ylabel: str, title: str, stem: str):
     fig, ax = plt.subplots(figsize=(7.8, 4.8))
-    fig.patch.set_facecolor("#FBFAF7")
+    fig.patch.set_facecolor("#FFFFFF")
     setup_axes(ax)
 
     for algorithm in ["maxflow_preflow_push", "energy_first", "edf", "random"]:
@@ -115,11 +116,12 @@ def _plot_horizon_sweep(df: pd.DataFrame, metric: str, ylabel: str, title: str, 
             label=LABELS[algorithm],
         )
 
-    ax.set_xlabel("Scheduling Horizon", fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_xlabel("Scheduling Horizon", fontsize=15)
+    ax.set_ylabel(ylabel, fontsize=15)
     ax.set_xticks([HORIZON_TO_HOURS[h] for h in HORIZON_ORDER], HORIZON_ORDER)
-    ax.legend(frameon=False, fontsize=10, loc="best")
-    ax.set_title(title, fontsize=14, pad=10)
+    ax.tick_params(axis="both", labelsize=13)
+    ax.legend(frameon=False, fontsize=12, loc="best")
+    ax.set_title(title, fontsize=17, pad=10)
     fig.tight_layout()
     save(fig, stem)
 
@@ -150,7 +152,7 @@ def plot_paper_panel():
     baseline_df = pd.read_csv(BASELINE_SWEEP_CSV)
 
     fig, axes = plt.subplots(1, 2, figsize=(11.6, 4.8))
-    fig.patch.set_facecolor("#FBFAF7")
+    fig.patch.set_facecolor("#FFFFFF")
     for ax in axes:
         setup_axes(ax)
 
@@ -161,11 +163,12 @@ def plot_paper_panel():
     y = range(len(small_df))
     values = small_df["coverage_ratio"].to_list()
     axes[0].barh(y, values, color=[COLORS[a] for a in small_df["algorithm"]], height=0.62)
-    axes[0].set_yticks(list(y), [LABELS[a] for a in small_df["algorithm"]], fontsize=10)
+    axes[0].set_yticks(list(y), [LABELS[a] for a in small_df["algorithm"]], fontsize=12)
     axes[0].invert_yaxis()
     axes[0].set_xlim(0, max(values) * 1.18)
-    axes[0].set_xlabel("Coverage Ratio", fontsize=11)
-    axes[0].set_title("(a) 1h Small Instance", fontsize=12, pad=8)
+    axes[0].set_xlabel("Coverage Ratio", fontsize=14)
+    axes[0].set_title("(a) 1h Small Instance", fontsize=15, pad=8)
+    axes[0].tick_params(axis="x", labelsize=12)
     add_bar_labels(axes[0], values, y, max(values) * 0.015)
 
     for algorithm in ["maxflow_preflow_push", "energy_first", "edf", "random"]:
@@ -182,10 +185,11 @@ def plot_paper_panel():
             label=LABELS[algorithm],
         )
     axes[1].set_xticks([HORIZON_TO_HOURS[h] for h in HORIZON_ORDER], HORIZON_ORDER)
-    axes[1].set_xlabel("Horizon", fontsize=11)
-    axes[1].set_ylabel("Coverage Ratio", fontsize=11)
-    axes[1].set_title("(b) Baseline Horizon Sweep", fontsize=12, pad=8)
-    axes[1].legend(frameon=False, fontsize=9, loc="lower right")
+    axes[1].set_xlabel("Horizon", fontsize=14)
+    axes[1].set_ylabel("Coverage Ratio", fontsize=14)
+    axes[1].tick_params(axis="both", labelsize=12)
+    axes[1].set_title("(b) Baseline Horizon Sweep", fontsize=15, pad=8)
+    axes[1].legend(frameon=False, fontsize=11, loc="lower right")
     fig.tight_layout()
     save(fig, "paper_algorithm_comparison_panel")
 

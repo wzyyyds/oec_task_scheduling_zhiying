@@ -1,0 +1,5 @@
+Nc,Ns,Nt,algorithm,battery_capacity_seconds,coverage_ratio,cpu_cycles_per_second,energy_per_cpu_cycle,expected_feasible,feasible,horizon_sec,max_flow_value,num_edges,num_jobs,num_nodes,satellite_solar_panel_power_watts,tag,task_average_deadline,task_average_execution,task_average_period,time_slot_length,total_demand
+6,48,1440,maxflow,600,0.8043049898391224,1e+18,1e-08,,False,86400,0.0010117787996376016,323422,26671,192637,12,baseline,40,40,200,60,0.0012579541497560252
+6,48,1440,energy_first,600,0.8021950159518471,1e+18,1e-08,,False,86400,0.001009124549230253,,26671,,12,baseline,40,40,200,60,0.0012579541497560577
+6,48,1440,random,600,0.8033079344116976,1e+18,1e-08,,False,86400,0.001010524549625162,,26671,,12,baseline,40,40,200,60,0.0012579541497560577
+6,48,1440,edf,600,0.8012834442151916,1e+18,1e-08,,False,86400,0.001007977833781327,,26671,,12,baseline,40,40,200,60,0.0012579541497560577

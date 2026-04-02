@@ -149,6 +149,11 @@ def build_case(config: Dict[str, float], horizon_label: str):
     if horizon_sec > A.shape[2] * slot_len:
         raise ValueError("Requested horizon exceeds available data range.")
     tasks, A, e_jk, required_slots = truncate_case(tasks, A, e_jk, slot_len, horizon_sec)
+    print(
+        f"[Paper case:{horizon_label}] Nc={A.shape[0]} Ns={A.shape[1]} Nt={A.shape[2]} "
+        f"slot_len={slot_len}",
+        flush=True,
+    )
     return tasks, A, e_jk, slot_len, tau_b, psi, phi, expected, required_slots
 
 

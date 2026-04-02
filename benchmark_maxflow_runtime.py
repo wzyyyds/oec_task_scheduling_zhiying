@@ -56,12 +56,15 @@ def build_full_case(config: Dict[str, float]):
 
     tasks: List[alt.Task] = []
     for task_id_str, td in task_info_dict.items():
+        job_exec_cycles = td.get("job_exec_cycles")
+        if job_exec_cycles is None:
+            job_exec_cycles = td["job_exec_time"] * config["cpu_cycles_per_second"]
         tasks.append(
             alt.Task(
                 task_id=int(task_id_str),
                 period=td["period"],
                 deadline=td["deadline"],
-                job_exec_time=td["job_exec_time"],
+                job_exec_cycles=job_exec_cycles,
                 offset=td.get("offset", 0.0),
             )
         )
@@ -164,6 +167,11 @@ def main():
 
     tasks, A_full, e_full, slot_len, tau_b, psi, phi = build_full_case(BASE_CONFIG)
     full_horizon_sec = A_full.shape[2] * slot_len
+    print(
+        f"[Dataset] Nc={A_full.shape[0]} Ns={A_full.shape[1]} Nt={A_full.shape[2]} "
+        f"slot_len={slot_len}",
+        flush=True,
+    )
 
     rows = []
     for label in args.labels:

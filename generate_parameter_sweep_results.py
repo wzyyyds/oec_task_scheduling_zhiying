@@ -15,13 +15,13 @@ OUT_CSV = os.path.join(OUT_DIR, "parameter_sweep_1h.csv")
 HORIZON_SEC = 3600
 
 SWEEPS: List[Tuple[str, str, List[float]]] = [
-    ("battery_capacity_seconds", "Battery capacity (s)", [0, 0.5, 1.0, 1.5, 2.0]),
-    ("cpu_cycles_per_second", "CPU cycles per second", [1e7, 1e8, 1e9, 1e10, 1e11]),
-    ("energy_per_cpu_cycle", "Energy per CPU cycle", [1e-9, 1e-8, 1e-7]),
-    ("satellite_solar_panel_power_watts", "Solar panel power (W)", [1, 5, 10, 15, 20, 25, 30]),
-    ("task_average_deadline", "Average deadline (s)", [10, 20, 30, 40, 50, 60]),
-    ("task_average_execution", "Average execution time (s)", [30, 35, 40, 45, 50, 55, 60]),
-    ("task_average_period", "Average period (s)", [100, 120, 140, 160, 180, 200]),
+    ("battery_capacity_seconds", "Battery capacity (s)", list(range(0, 11))),
+    ("cpu_cycles_per_second", "CPU cycles per second", [1e7, 2e7, 5e7, 1e8, 2e8, 5e8, 1e9, 2e9, 5e9, 1e10]),
+    ("energy_per_cpu_cycle", "Energy per CPU cycle", [5e-9, 6e-9, 7e-9, 8e-9, 9e-9, 1e-8, 1.1e-8, 1.2e-8, 1.4e-8, 1.6e-8, 2e-8]),
+    ("satellite_solar_panel_power_watts", "Solar panel power (W)", [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
+    ("task_average_deadline", "Average deadline (s)", [20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40]),
+    ("task_average_execution", "Average execution time (s)", list(range(10, 101, 10))),
+    ("task_average_period", "Average period (s)", list(range(100, 301, 20))),
     ("time_slot_length", "Time slot length (s)", [60]),
 ]
 
@@ -130,6 +130,11 @@ def main():
                 raise ValueError("Requested parameter-sweep horizon exceeds available data range.")
 
             tasks, A, e_jk, required_slots = truncate_case(tasks, A, e_jk, slot_len, HORIZON_SEC)
+            print(
+                f"[Sweep case:{parameter_key}={value}] Nc={A.shape[0]} Ns={A.shape[1]} "
+                f"Nt={A.shape[2]} slot_len={slot_len}",
+                flush=True,
+            )
 
             for algorithm in ALGORITHMS:
                 result = run_algorithm(algorithm, tasks, A, e_jk, slot_len, tau_b, psi, phi, HORIZON_SEC)

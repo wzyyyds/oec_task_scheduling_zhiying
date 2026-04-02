@@ -18,3 +18,9 @@
     python build_testcase.py
     ```
     The output will be a json file named `test_case.json`
+
+6. If you want to synthesize more satellites while keeping similar orbital cadence and solar-energy rhythm, run
+    ```
+    python augment_satellite_data.py --new-planes 1
+    ```
+    Then rerun `build_testcase.py` to refresh `test_case.json`.

@@ -56,7 +56,7 @@ def save(fig, stem: str) -> None:
 
 
 def setup_axes(ax):
-    ax.set_facecolor("#FBFAF7")
+    ax.set_facecolor("#FFFFFF")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.35)
@@ -88,7 +88,7 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
     values = sorted(sub["parameter_value"].unique())
 
     fig, ax = plt.subplots(figsize=(7.8, 4.8))
-    fig.patch.set_facecolor("#FBFAF7")
+    fig.patch.set_facecolor("#FFFFFF")
     setup_axes(ax)
     x_positions = list(range(len(values)))
     x_index = {value: idx for idx, value in enumerate(values)}
@@ -111,8 +111,8 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
             label=LABELS[algorithm],
         )
 
-    ax.set_xlabel(parameter_label, fontsize=12)
-    ax.set_ylabel("Coverage Ratio", fontsize=12)
+    ax.set_xlabel(parameter_label, fontsize=15)
+    ax.set_ylabel("Coverage Ratio", fontsize=15)
     if parameter_key == "cpu_cycles_per_second":
         ax.set_xscale("log")
         tick_labels = [format_cpu_tick(v) for v in values]
@@ -120,9 +120,10 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
     else:
         tick_labels = [format_tick(v) for v in values]
         ax.set_xticks(x_positions, tick_labels, rotation=20)
+    ax.tick_params(axis="both", labelsize=13)
 
-    ax.legend(frameon=False, fontsize=10, loc="best")
-    ax.set_title(f"Coverage vs. {parameter_label}", fontsize=14, pad=10)
+    ax.legend(frameon=False, fontsize=12, loc="best")
+    ax.set_title(f"Coverage vs. {parameter_label}", fontsize=17, pad=10)
     fig.tight_layout()
     save(fig, FILE_STEMS[parameter_key])
 
