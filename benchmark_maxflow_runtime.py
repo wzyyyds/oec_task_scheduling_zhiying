@@ -16,13 +16,13 @@ RUNTIME_RESULTS_DIR = os.path.join("results", "runtime")
 OUT_CSV = os.path.join(RUNTIME_RESULTS_DIR, "maxflow_runtime_by_horizon.csv")
 
 BASE_CONFIG = {
-    "energy_per_cpu_cycle": 1e-9,
+    "energy_per_cpu_cycle": 1e-8,
     "cpu_cycles_per_second": 1e10,
-    "battery_capacity_seconds": 7200,
-    "satellite_solar_panel_power_watts": 40.0,
+    "battery_capacity_seconds": 0.5,
+    "satellite_solar_panel_power_watts": 14.0,
     "time_slot_length": 60,
-    "task_average_period": 300,
-    "task_average_deadline": 300,
+    "task_average_period": 220,
+    "task_average_deadline": 30,
     "task_average_execution": 50,
 }
 
@@ -91,8 +91,14 @@ def benchmark_single_horizon(
 
     start_total = time.perf_counter()
 
-    jobs = alt.generate_jobs(tasks, horizon_sec=horizon_sec)
+    jobs = alt.generate_jobs(tasks, horizon_sec=horizon_sec, phi=phi)
     tau_in = alt.convert_energy_to_time(e_jk, psi=psi, phi=phi)
+    eps = alt.compute_numeric_epsilon(
+        [job.demand for job in jobs],
+        tau_in,
+        tau_b,
+        slot_len,
+    )
 
     start_graph = time.perf_counter()
     graph, source, sink, total_demand = alt.build_scheduling_graph(
@@ -102,6 +108,7 @@ def benchmark_single_horizon(
         tau_in=tau_in,
         tau_b=tau_b,
         slot_len=slot_len,
+        eps=eps,
     )
     end_graph = time.perf_counter()
 
