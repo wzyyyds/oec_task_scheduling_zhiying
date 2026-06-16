@@ -840,6 +840,9 @@ def milp_small_instance(
         prob += assigned_to_job <= job.demand
         prob += assigned_to_job >= job.demand * z[jidx]
 
+    for key, sat_keys in feasible_by_job_slot.items():
+        prob += pulp.lpSum(y[assign_key] for assign_key in sat_keys) <= slot_len
+
     for sat_idx in range(Ns):
         for slot_idx in range(Nt):
             sat_slot_keys = feasible_by_sat_slot.get((sat_idx, slot_idx), [])
@@ -887,6 +890,169 @@ def milp_small_instance(
         "solve_time_sec": end_solve_time - start_solve_time,
         "num_candidate_assignments": len(feasible_assignments),
         "objective_mode": objective_mode,
+    }
+
+
+def lp_optimal_throughput(
+    tasks: List[Task],
+    A: np.ndarray,
+    e_jk: np.ndarray,
+    psi: float,
+    phi: float,
+    tau_b: float,
+    slot_len: float,
+    horizon_sec: float,
+    time_limit_sec: int = 300,
+    max_feasible_assignments: int = 250000,
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """
+    Continuous LP optimum for the paper throughput/coverage objective.
+
+    This is the direct LP counterpart of the time-expanded max-flow model:
+    maximize total assigned execution time subject to job demand, job-slot,
+    satellite-slot, visibility/deadline, and energy/battery constraints.
+    """
+    pulp = _load_pulp()
+
+    Nc, Ns, Nt = A.shape
+    assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
+
+    jobs = generate_jobs(tasks, horizon_sec=horizon_sec, phi=phi)
+    D_total = sum(job.demand for job in jobs)
+    if D_total <= 0:
+        return {
+            "feasible": True,
+            "max_flow_value": 0.0,
+            "total_demand": 0.0,
+            "coverage_ratio": 1.0,
+            "num_jobs": len(jobs),
+            "completed_jobs": len(jobs),
+            "completed_job_ratio": 1.0,
+            "num_nodes": None,
+            "num_edges": None,
+            "solver_status": "trivial",
+            "solve_time_sec": 0.0,
+            "num_candidate_assignments": 0,
+            "objective_mode": "throughput_lp",
+        }
+
+    tau_in = convert_energy_to_time(e_jk, psi=psi, phi=phi)
+    eps = compute_numeric_epsilon(
+        [job.demand for job in jobs],
+        tau_in,
+        tau_b,
+        slot_len,
+    )
+
+    feasible_assignments = []
+    feasible_by_job = {}
+    feasible_by_job_slot = {}
+    feasible_by_sat_slot = {}
+    for jidx, job in enumerate(jobs):
+        for slot_idx in range(Nt):
+            slot_start, slot_end = slot_bounds(slot_len, slot_idx)
+            if slot_start < job.release or slot_end > job.deadline_abs:
+                continue
+            for sat_idx in range(Ns):
+                if A[job.task_id, sat_idx, slot_idx] != 1:
+                    continue
+                key = (jidx, sat_idx, slot_idx)
+                feasible_assignments.append(key)
+                feasible_by_job.setdefault(jidx, []).append(key)
+                feasible_by_job_slot.setdefault((jidx, slot_idx), []).append(key)
+                feasible_by_sat_slot.setdefault((sat_idx, slot_idx), []).append(key)
+
+    if len(feasible_assignments) > max_feasible_assignments:
+        return {
+            "feasible": False,
+            "max_flow_value": None,
+            "total_demand": D_total,
+            "coverage_ratio": None,
+            "num_jobs": len(jobs),
+            "completed_jobs": None,
+            "completed_job_ratio": None,
+            "num_nodes": None,
+            "num_edges": None,
+            "solver_status": "skipped_too_large",
+            "solve_time_sec": None,
+            "num_candidate_assignments": len(feasible_assignments),
+            "objective_mode": "throughput_lp",
+        }
+
+    start_solve_time = time.perf_counter()
+    prob = pulp.LpProblem("satellite_scheduling_throughput_lp", pulp.LpMaximize)
+
+    y = {
+        key: pulp.LpVariable(f"y_{key[0]}_{key[1]}_{key[2]}", lowBound=0.0, upBound=slot_len, cat="Continuous")
+        for key in feasible_assignments
+    }
+    battery = {
+        (sat_idx, slot_idx): pulp.LpVariable(
+            f"b_{sat_idx}_{slot_idx}", lowBound=0.0, upBound=tau_b, cat="Continuous"
+        )
+        for sat_idx in range(Ns) for slot_idx in range(Nt)
+    }
+    spill = {
+        (sat_idx, slot_idx): pulp.LpVariable(f"spill_{sat_idx}_{slot_idx}", lowBound=0.0, cat="Continuous")
+        for sat_idx in range(Ns) for slot_idx in range(Nt)
+    }
+
+    prob += pulp.lpSum(y.values())
+
+    for jidx, job in enumerate(jobs):
+        prob += pulp.lpSum(y[key] for key in feasible_by_job.get(jidx, [])) <= job.demand
+
+    for key, sat_keys in feasible_by_job_slot.items():
+        prob += pulp.lpSum(y[assign_key] for assign_key in sat_keys) <= slot_len
+
+    for sat_idx in range(Ns):
+        for slot_idx in range(Nt):
+            sat_slot_keys = feasible_by_sat_slot.get((sat_idx, slot_idx), [])
+            slot_usage = pulp.lpSum(y[key] for key in sat_slot_keys)
+            prob += slot_usage <= slot_len
+
+            if slot_idx == 0:
+                prob += battery[(sat_idx, slot_idx)] == (
+                    tau_in[sat_idx, slot_idx] - slot_usage - spill[(sat_idx, slot_idx)]
+                )
+            else:
+                prob += battery[(sat_idx, slot_idx)] == (
+                    battery[(sat_idx, slot_idx - 1)]
+                    + tau_in[sat_idx, slot_idx]
+                    - slot_usage
+                    - spill[(sat_idx, slot_idx)]
+                )
+
+    solver = pulp.PULP_CBC_CMD(msg=debug, timeLimit=time_limit_sec, mip=False)
+    prob.solve(solver)
+    end_solve_time = time.perf_counter()
+
+    status = pulp.LpStatus[prob.status]
+    assigned = sum(float(var.value() or 0.0) for var in y.values())
+    completed_jobs = 0
+    for jidx, job in enumerate(jobs):
+        assigned_to_job = sum(
+            float(y[key].value() or 0.0)
+            for key in feasible_by_job.get(jidx, [])
+        )
+        if assigned_to_job + eps >= job.demand:
+            completed_jobs += 1
+
+    return {
+        "feasible": assigned >= D_total - eps and status == "Optimal",
+        "max_flow_value": assigned,
+        "total_demand": D_total,
+        "coverage_ratio": assigned / D_total if D_total > 0 else 1.0,
+        "num_jobs": len(jobs),
+        "completed_jobs": completed_jobs,
+        "completed_job_ratio": completed_jobs / len(jobs) if jobs else 1.0,
+        "num_nodes": None,
+        "num_edges": None,
+        "solver_status": status,
+        "solve_time_sec": end_solve_time - start_solve_time,
+        "num_candidate_assignments": len(feasible_assignments),
+        "objective_mode": "throughput_lp",
     }
 
 
