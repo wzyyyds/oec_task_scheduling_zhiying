@@ -16,21 +16,7 @@ DEFAULT_COVERAGE_PNG = os.path.join("plots", "rebuttal_milp_coverage_vs_horizon.
 DEFAULT_COVERAGE_PDF = os.path.join("plots", "rebuttal_milp_coverage_vs_horizon.pdf")
 
 HORIZON_ORDER = ["10min", "1h", "2h", "3h", "4h", "5h", "6h", "7h", "8h", "9h", "10h", "11h", "12h"]
-HORIZON_TO_XPOS = {
-    "10min": 0.6,
-    "1h": 1,
-    "2h": 2,
-    "3h": 3,
-    "4h": 4,
-    "5h": 5,
-    "6h": 6,
-    "7h": 7,
-    "8h": 8,
-    "9h": 9,
-    "10h": 10,
-    "11h": 11,
-    "12h": 12,
-}
+HORIZON_TO_XPOS = {label: idx for idx, label in enumerate(HORIZON_ORDER)}
 ALGORITHM_ORDER = ["ecoflow", "milp"]
 LABELS = {
     "ecoflow": "ECoFlow",
@@ -72,7 +58,7 @@ def plot_metric(rows, metric: str, ylabel: str, output_png: str, output_pdf: str
     os.makedirs(os.path.dirname(output_png), exist_ok=True)
     os.makedirs(os.path.dirname(output_pdf), exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(7.4, 4.8))
+    fig, ax = plt.subplots(figsize=(8.8, 4.8))
     fig.patch.set_facecolor("#FFFFFF")
     setup_axes(ax)
 
@@ -106,7 +92,7 @@ def plot_metric(rows, metric: str, ylabel: str, output_png: str, output_pdf: str
     ax.set_ylabel(ylabel, fontsize=14)
     ax.set_xticks([HORIZON_TO_XPOS[label] for label in HORIZON_ORDER], HORIZON_ORDER)
     ax.tick_params(axis="both", labelsize=12)
-    ax.set_xlim(0, 12.5)
+    ax.set_xlim(-0.4, len(HORIZON_ORDER) - 0.6)
     if log_y:
         ax.set_yscale("log")
     if metric == "coverage_ratio":
