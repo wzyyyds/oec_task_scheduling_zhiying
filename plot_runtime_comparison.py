@@ -21,10 +21,17 @@ HORIZON_TO_HOURS = {
     "12h": 12,
     "24h": 24,
 }
+HORIZON_TO_XPOS = {
+    "10min": 0.6,
+    "1h": 2.2,
+    "6h": 6,
+    "12h": 12,
+    "24h": 24,
+}
 ALGORITHM_ORDER = ["edmonds_karp", "ford_fulkerson", "preflow_push"]
 ALGORITHM_LABELS = {
     "edmonds_karp": "Edmonds-Karp",
-    "ford_fulkerson": "Ford-Fulkerson",
+    "ford_fulkerson": "DFS-FF",
     "preflow_push": "Push-Relabel",
 }
 ALGORITHM_STYLES = {
@@ -69,7 +76,7 @@ def annotate_speedups(ax, df: pd.DataFrame, runtime_col: str) -> None:
         if label not in baseline.index:
             continue
 
-        x = HORIZON_TO_HOURS[label]
+        x = HORIZON_TO_XPOS[label]
         baseline_runtime = float(baseline.at[label, runtime_col])
         if baseline_runtime <= 0:
             continue
@@ -85,15 +92,20 @@ def annotate_speedups(ax, df: pd.DataFrame, runtime_col: str) -> None:
 
             y = max(comp_runtime, baseline_runtime)
             speedup = comp_runtime / baseline_runtime
+            y_offset = 10 + idx * 12
+            if label == "6h" and algorithm == "edmonds_karp":
+                y_offset = 2
+            if algorithm == "ford_fulkerson":
+                y_offset -= 6
 
             ax.annotate(
                 f"{speedup:.1f}x",
                 xy=(x, y),
-                xytext=(0, 10 + idx * 12),
+                xytext=(0, y_offset),
                 textcoords="offset points",
                 ha="center",
                 va="bottom",
-                fontsize=9,
+                fontsize=12,
                 color="#333333",
             )
 
@@ -114,7 +126,7 @@ def plot_runtime(df: pd.DataFrame, output_png: str, output_pdf: str, runtime_col
         style = ALGORITHM_STYLES[algorithm]
 
         ax.plot(
-            sub["horizon_hours"],
+            sub["label"].map(HORIZON_TO_XPOS),
             sub[runtime_col],
             marker=style["marker"],
             linewidth=2.3,
@@ -127,8 +139,9 @@ def plot_runtime(df: pd.DataFrame, output_png: str, output_pdf: str, runtime_col
 
     ax.set_xlabel("Scheduling horizon", fontsize=14)
     ax.set_ylabel(RUNTIME_LABELS[runtime_col], fontsize=14)
-    ax.set_xticks([HORIZON_TO_HOURS[label] for label in HORIZON_ORDER])
-    ax.set_xticklabels(HORIZON_ORDER, fontsize=12)
+    ax.set_xticks([HORIZON_TO_XPOS[label] for label in HORIZON_ORDER], HORIZON_ORDER)
+    ax.tick_params(axis="x", labelsize=12, rotation=0)
+    ax.set_xlim(0, 25)
     ax.set_yscale("log")
     ax.tick_params(axis="y", labelsize=12)
     ax.grid(True, which="major", linewidth=0.7, alpha=0.7)

@@ -34,7 +34,7 @@ FILE_STEMS = {
 }
 
 LABELS = {
-    "maxflow_preflow_push": "Max-flow",
+    "maxflow_preflow_push": "ECoFlow",
     "energy_first": "Energy-first EDF",
     "edf": "EDF",
     "random": "Random",
@@ -46,6 +46,10 @@ STYLES = {
     "edf": {"color": "#F4A261", "marker": "^"},
     "random": {"color": "#E76F51", "marker": "D"},
 }
+
+AXIS_LABEL_FONTSIZE = 17
+TICK_LABEL_FONTSIZE = 15
+LEGEND_FONTSIZE = 14
 
 
 def save(fig, stem: str) -> None:
@@ -63,6 +67,8 @@ def setup_axes(ax):
 
 
 def format_tick(v: float) -> str:
+    if abs(v) < 1e-12:
+        return "0"
     if v >= 1e9:
         return f"{v/1e9:.2f}e9"
     if v < 1e-3:
@@ -75,8 +81,17 @@ def format_tick(v: float) -> str:
 def format_cpu_tick(v: float) -> str:
     if v <= 0:
         return "0"
-    exponent = int(f"{v:.0e}".split("e")[1])
-    return rf"$10^{exponent}$"
+    scientific = f"{v:.1e}"
+    mantissa_str, exponent_str = scientific.split("e")
+    mantissa = float(mantissa_str)
+    exponent = int(exponent_str)
+    if abs(mantissa - 1.0) < 1e-9:
+        return rf"$10^{exponent}$"
+    if abs(mantissa - round(mantissa)) < 1e-9:
+        mantissa_text = str(int(round(mantissa)))
+    else:
+        mantissa_text = f"{mantissa:g}"
+    return rf"${mantissa_text}\times10^{exponent}$"
 
 
 def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
@@ -85,6 +100,8 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
         return
 
     parameter_label = str(sub["parameter_label"].iloc[0])
+    if parameter_key == "cpu_cycles_per_second":
+        sub = sub[sub["parameter_value"] <= 3.5e9].copy()
     values = sorted(sub["parameter_value"].unique())
 
     fig, ax = plt.subplots(figsize=(7.8, 4.8))
@@ -111,19 +128,24 @@ def plot_parameter(df: pd.DataFrame, parameter_key: str) -> None:
             label=LABELS[algorithm],
         )
 
-    ax.set_xlabel(parameter_label, fontsize=15)
-    ax.set_ylabel("Coverage Ratio", fontsize=15)
+    ax.set_xlabel(parameter_label, fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel("Coverage Ratio", fontsize=AXIS_LABEL_FONTSIZE)
     if parameter_key == "cpu_cycles_per_second":
         ax.set_xscale("log")
-        tick_labels = [format_cpu_tick(v) for v in values]
-        ax.set_xticks(values, tick_labels, rotation=20)
+        x_tick_max = 3.5e9
+        x_display_max = 4.2e9
+        tick_values = list(values)
+        if x_tick_max not in tick_values:
+            tick_values.append(x_tick_max)
+        ax.set_xlim(min(values), x_display_max)
+        tick_labels = [format_cpu_tick(v) for v in tick_values]
+        ax.set_xticks(tick_values, tick_labels, rotation=20)
     else:
         tick_labels = [format_tick(v) for v in values]
         ax.set_xticks(x_positions, tick_labels, rotation=20)
-    ax.tick_params(axis="both", labelsize=13)
+    ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
 
-    ax.legend(frameon=False, fontsize=12, loc="best")
-    ax.set_title(f"Coverage vs. {parameter_label}", fontsize=17, pad=10)
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="best")
     fig.tight_layout()
     save(fig, FILE_STEMS[parameter_key])
 

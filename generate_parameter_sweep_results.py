@@ -16,7 +16,7 @@ HORIZON_SEC = 3600
 
 SWEEPS: List[Tuple[str, str, List[float]]] = [
     ("battery_capacity_seconds", "Battery capacity (s)", list(range(0, 11))),
-    ("cpu_cycles_per_second", "CPU cycles per second", [1e7, 2e7, 5e7, 1e8, 2e8, 5e8, 1e9, 2e9, 5e9, 1e10]),
+    ("cpu_cycles_per_second", "CPU cycles per second", [1e7, 2e7, 5e7, 1e8, 2e8, 5e8, 1e9, 2e9, 3.5e9, 5e9, 1e10]),
     ("energy_per_cpu_cycle", "Energy per CPU cycle", [5e-9, 6e-9, 7e-9, 8e-9, 9e-9, 1e-8, 1.1e-8, 1.2e-8, 1.4e-8, 1.6e-8, 2e-8]),
     ("satellite_solar_panel_power_watts", "Solar panel power (W)", [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
     ("task_average_deadline", "Average deadline (s)", [20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40]),

@@ -24,7 +24,7 @@ HORIZON_TO_HOURS = {
 }
 
 LABELS = {
-    "maxflow_preflow_push": "Max-flow",
+    "maxflow_preflow_push": "ECoFlow",
     "milp_small": "MILP",
     "energy_first": "Energy-first EDF",
     "edf": "Deadline EDF",
