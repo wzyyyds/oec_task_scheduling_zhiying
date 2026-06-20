@@ -6,12 +6,17 @@ import tempfile
 
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib-cache"))
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
 DEFAULT_INPUT = os.path.join("results", "rebuttal", "milp_horizon_comparison.csv")
 DEFAULT_RUNTIME_PNG = os.path.join("plots", "rebuttal_milp_runtime_vs_horizon.png")
 DEFAULT_RUNTIME_PDF = os.path.join("plots", "rebuttal_milp_runtime_vs_horizon.pdf")
+DEFAULT_RUNTIME_LINEAR_PNG = os.path.join("plots", "rebuttal_milp_runtime_vs_horizon_linear.png")
+DEFAULT_RUNTIME_LINEAR_PDF = os.path.join("plots", "rebuttal_milp_runtime_vs_horizon_linear.pdf")
 DEFAULT_COVERAGE_PNG = os.path.join("plots", "rebuttal_milp_coverage_vs_horizon.png")
 DEFAULT_COVERAGE_PDF = os.path.join("plots", "rebuttal_milp_coverage_vs_horizon.pdf")
 
@@ -109,6 +114,8 @@ def main() -> None:
     parser.add_argument("--input", default=DEFAULT_INPUT, help="Input comparison CSV.")
     parser.add_argument("--runtime-png", default=DEFAULT_RUNTIME_PNG)
     parser.add_argument("--runtime-pdf", default=DEFAULT_RUNTIME_PDF)
+    parser.add_argument("--runtime-linear-png", default=DEFAULT_RUNTIME_LINEAR_PNG)
+    parser.add_argument("--runtime-linear-pdf", default=DEFAULT_RUNTIME_LINEAR_PDF)
     parser.add_argument("--coverage-png", default=DEFAULT_COVERAGE_PNG)
     parser.add_argument("--coverage-pdf", default=DEFAULT_COVERAGE_PDF)
     args = parser.parse_args()
@@ -124,6 +131,14 @@ def main() -> None:
     )
     plot_metric(
         rows,
+        "wall_clock_sec",
+        "Runtime (seconds)",
+        args.runtime_linear_png,
+        args.runtime_linear_pdf,
+        log_y=False,
+    )
+    plot_metric(
+        rows,
         "coverage_ratio",
         "Coverage ratio",
         args.coverage_png,
@@ -132,6 +147,8 @@ def main() -> None:
     )
     print(f"Saved runtime plot to {os.path.abspath(args.runtime_png)}")
     print(f"Saved runtime plot to {os.path.abspath(args.runtime_pdf)}")
+    print(f"Saved linear runtime plot to {os.path.abspath(args.runtime_linear_png)}")
+    print(f"Saved linear runtime plot to {os.path.abspath(args.runtime_linear_pdf)}")
     print(f"Saved coverage plot to {os.path.abspath(args.coverage_png)}")
     print(f"Saved coverage plot to {os.path.abspath(args.coverage_pdf)}")
 

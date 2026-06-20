@@ -373,7 +373,8 @@ def feasibility_test(
     return_flow: bool = False,
     debug: bool = False,
     debug_prefix: str = "",
-    flow_algorithm: str = "edmonds_karp"
+    flow_algorithm: str = "edmonds_karp",
+    return_schedule: bool = False,
 ) -> Dict[str, Any]:
     """
     Build the network and run the selected max-flow algorithm.
@@ -458,6 +459,31 @@ def feasibility_test(
     if return_flow:
         result["flow"] = flow_dict
         result["graph"] = G
+    if return_schedule:
+        schedule = []
+        job_id_to_index = {job.job_id: idx for idx, job in enumerate(jobs)}
+        for u, nbrs in flow_dict.items():
+            if not isinstance(u, str) or not u.startswith("JOBSLOT_"):
+                continue
+            for v, amount in nbrs.items():
+                if amount <= flow_tolerance:
+                    continue
+                if not isinstance(v, str) or not v.startswith("ST_"):
+                    continue
+                body = u[len("JOBSLOT_"):]
+                job_id, slot_str = body.rsplit("_", 1)
+                _, sat_str, _ = v.split("_", 2)
+                job_idx = job_id_to_index[job_id]
+                job = jobs[job_idx]
+                schedule.append({
+                    "job_idx": job_idx,
+                    "job_id": job.job_id,
+                    "task_id": job.task_id,
+                    "sat_idx": int(sat_str),
+                    "slot_idx": int(slot_str),
+                    "amount": float(amount),
+                })
+        result["schedule"] = schedule
     return result
 
 
@@ -480,6 +506,7 @@ def heuristic_most_energy_first(
     slot_len: float,
     horizon_sec: float,
     debug: bool = False,
+    return_schedule: bool = False,
 ) -> Dict[str, Any]:
     Nc, Ns, Nt = A.shape
     assert horizon_sec > 0 and math.isclose(horizon_sec, Nt * slot_len, rel_tol=0, abs_tol=1e-6)
@@ -505,6 +532,7 @@ def heuristic_most_energy_first(
 
     finished_jobs_list = set()
     total_assigned = 0.0
+    schedule = []
     sat_energy_dict = {}
     active_job_index_list = []
     next_unreleased_job_idx = 0
@@ -564,6 +592,15 @@ def heuristic_most_energy_first(
             sat_energy_dict[sat] = avail_E - assign
             sat_slot_remaining[sat] -= assign
             total_assigned += assign
+            if return_schedule:
+                schedule.append({
+                    "job_idx": jidx,
+                    "job_id": job.job_id,
+                    "task_id": job.task_id,
+                    "sat_idx": sat,
+                    "slot_idx": time_slot_idx,
+                    "amount": float(assign),
+                })
 
             if debug:
                 print(f"[slot {time_slot_idx}] job {jidx} -> sat {sat}, "
@@ -587,7 +624,7 @@ def heuristic_most_energy_first(
             if jidx not in finished_jobs_list and job.demand > eps:
                 print(f"Unfinished job {jidx} (task {job.task_id}), remaining {job.demand}")
 
-    return {
+    result = {
         "feasible": feasible,
         "max_flow_value": total_assigned,
         "total_demand": D_total,
@@ -598,6 +635,9 @@ def heuristic_most_energy_first(
         "num_edges": None,
         "coverage_ratio": total_assigned / D_total if D_total > 0 else 1.0
     }
+    if return_schedule:
+        result["schedule"] = schedule
+    return result
 
 
 def heuristic_random_assignment(
@@ -611,6 +651,7 @@ def heuristic_random_assignment(
     horizon_sec: float,
     random_seed: int = None,
     debug: bool = False,
+    return_schedule: bool = False,
 ) -> Dict[str, Any]:
     """
     随机 baseline：
@@ -651,6 +692,7 @@ def heuristic_random_assignment(
     active_jobs: List[int] = []
     next_job_idx = 0
     total_assigned = 0.0
+    schedule = []
 
     rng = np.random.default_rng(random_seed)
 
@@ -696,6 +738,15 @@ def heuristic_random_assignment(
             sat_energy[sat] -= assign
             sat_slot_remaining[sat] -= assign
             total_assigned += assign
+            if return_schedule:
+                schedule.append({
+                    "job_idx": jidx,
+                    "job_id": jobs[jidx].job_id,
+                    "task_id": jobs[jidx].task_id,
+                    "sat_idx": sat,
+                    "slot_idx": k,
+                    "amount": float(assign),
+                })
 
             if debug:
                 print(f"[rand][slot {k}] job {jidx} -> sat {sat}, assign={assign:.4f}, "
@@ -706,7 +757,7 @@ def heuristic_random_assignment(
     feasible = (total_assigned >= D_total - eps)
     completed_jobs = sum(1 for rem in remaining if rem <= eps)
 
-    return {
+    result = {
         "feasible": feasible,
         "max_flow_value": total_assigned,
         "total_demand": D_total,
@@ -717,6 +768,9 @@ def heuristic_random_assignment(
         "num_nodes": None,
         "num_edges": None,
     }
+    if return_schedule:
+        result["schedule"] = schedule
+    return result
 
 
 
@@ -733,6 +787,7 @@ def milp_small_instance(
     max_feasible_assignments: int = 25000,
     objective_mode: str = "throughput",
     debug: bool = False,
+    return_schedule: bool = False,
 ) -> Dict[str, Any]:
     """
     Small-instance MILP baseline solved with PuLP/CBC.
@@ -876,7 +931,7 @@ def milp_small_instance(
         if assigned_to_job + eps >= job.demand:
             completed_jobs += 1
 
-    return {
+    result = {
         "feasible": assigned >= D_total - eps and status in {"Optimal", "Integer Feasible"},
         "max_flow_value": assigned,
         "total_demand": D_total,
@@ -891,6 +946,24 @@ def milp_small_instance(
         "num_candidate_assignments": len(feasible_assignments),
         "objective_mode": objective_mode,
     }
+    if return_schedule:
+        schedule = []
+        for key, var in y.items():
+            amount = float(var.value() or 0.0)
+            if amount <= eps:
+                continue
+            jidx, sat_idx, slot_idx = key
+            job = jobs[jidx]
+            schedule.append({
+                "job_idx": jidx,
+                "job_id": job.job_id,
+                "task_id": job.task_id,
+                "sat_idx": sat_idx,
+                "slot_idx": slot_idx,
+                "amount": amount,
+            })
+        result["schedule"] = schedule
+    return result
 
 
 def lp_optimal_throughput(
@@ -1067,6 +1140,7 @@ def heuristic_edf(
     horizon_sec: float,
     random_seed: int = 42,
     debug: bool = False,
+    return_schedule: bool = False,
 ) -> Dict[str, Any]:
     """
     Deadline EDF baseline:
@@ -1104,6 +1178,7 @@ def heuristic_edf(
     active_jobs: List[int] = []
     next_job_idx = 0
     total_assigned = 0.0
+    schedule = []
     rng = np.random.default_rng(random_seed)
 
     for k in range(Nt):
@@ -1151,6 +1226,15 @@ def heuristic_edf(
             sat_energy[selected_sat] -= assign
             sat_slot_remaining[selected_sat] -= assign
             total_assigned += assign
+            if return_schedule:
+                schedule.append({
+                    "job_idx": jidx,
+                    "job_id": jobs[jidx].job_id,
+                    "task_id": jobs[jidx].task_id,
+                    "sat_idx": selected_sat,
+                    "slot_idx": k,
+                    "amount": float(assign),
+                })
 
             if debug:
                 print(f"[edf][slot {k}] job {jidx} -> sat {selected_sat}, assign={assign:.4f}, "
@@ -1161,7 +1245,7 @@ def heuristic_edf(
     feasible = (total_assigned >= D_total - eps)
     completed_jobs = sum(1 for rem in remaining if rem <= eps)
 
-    return {
+    result = {
         "feasible": feasible,
         "max_flow_value": total_assigned,
         "total_demand": D_total,
@@ -1172,6 +1256,9 @@ def heuristic_edf(
         "num_nodes": None,
         "num_edges": None,
     }
+    if return_schedule:
+        result["schedule"] = schedule
+    return result
 
 
 
